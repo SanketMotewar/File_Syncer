@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Chunk Syncer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6200ee;
+            --primary-dark: #3700b3;
+            --secondary: #03dac6;
+            --error: #b00020;
+            --background: #f5f5f5;
+            --surface: #ffffff;
+            --on-primary: #ffffff;
+            --on-secondary: #000000;
+            --on-background: #000000;
+            --on-surface: #000000;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--background);
+            color: var(--on-background);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--primary);
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background-color: var(--surface);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+        }
+
+        .card-title i {
+            margin-right: 0.5rem;
+        }
+
+        .file-upload {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .file-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .file-label {
+            font-weight: 500;
+            color: var(--on-surface);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: var(--primary);
+            color: var(--on-primary);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+            text-align: center;
+        }
+
+        .file-button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .file-name {
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .compare-button {
+            padding: 1rem 2rem;
+            background-color: var(--secondary);
+            color: var(--on-secondary);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: background-color 0.3s ease;
+            margin-top: 1rem;
+            align-self: center;
+        }
+
+        .compare-button:hover {
+            background-color: #00b4a0;
+        }
+
+        .compare-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .results {
+            display: none;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background-color: var(--surface);
+            border-radius: 8px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-added {
+            color: #4CAF50;
+        }
+
+        .stat-removed {
+            color: #F44336;
+        }
+
+        .stat-modified {
+            color: #FFC107;
+        }
+
+        .stat-unchanged {
+            color: #9E9E9E;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .visualization {
+            margin: 2rem 0;
+        }
+
+        .visualization-title {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+
+        .chunk-map {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+            margin-bottom: 1rem;
+        }
+
+        .chunk {
+            height: 30px;
+            flex-grow: 1;
+            min-width: 5px;
+            transition: transform 0.2s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .chunk:hover {
+            transform: scale(1.1);
+            z-index: 1;
+        }
+
+        .chunk-tooltip {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .chunk:hover .chunk-tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .operations {
+            margin-top: 2rem;
+        }
+
+        .operation-header {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            font-weight: bold;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 0.5rem;
+        }
+
+        .operation {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background-color: var(--surface);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            align-items: center;
+        }
+
+        .operation-type {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .type-add {
+            background-color: #E8F5E9;
+            color: #4CAF50;
+        }
+
+        .type-remove {
+            background-color: #FFEBEE;
+            color: #F44336;
+        }
+
+        .type-modify {
+            background-color: #FFF8E1;
+            color: #FFC107;
+        }
+
+        .data-preview {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.25rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sync-button {
+            padding: 0.75rem 1.5rem;
+            background-color: var(--primary);
+            color: var(--on-primary);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .sync-button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 2rem 0;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: var(--error);
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        .efficiency-info {
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .efficiency-info strong {
+            color: var(--primary);
+        }
+
+        .no-changes {
+            text-align: center;
+            color: #666;
+            padding: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .stats {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .operation {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>File Chunk Syncer</h1>
+            <p class="subtitle">Efficient file synchronization using chunk hashing (SHA-256)</p>
+        </header>
+
+        <div class="card">
+            <h2 class="card-title"><i class="fas fa-file-upload"></i> Upload Files</h2>
+            <div class="file-upload">
+                <div class="file-input-group">
+                    <label class="file-label">Original File (Old Version)</label>
+                    <input type="file" id="old-file" class="file-input">
+                    <label for="old-file" class="file-button">Choose File</label>
+                    <div id="old-file-name" class="file-name">No file selected</div>
+                </div>
+
+                <div class="file-input-group">
+                    <label class="file-label">Modified File (New Version)</label>
+                    <input type="file" id="new-file" class="file-input">
+                    <label for="new-file" class="file-button">Choose File</label>
+                    <div id="new-file-name" class="file-name">No file selected</div>
+                </div>
+
+                <button id="compare-button" class="compare-button" disabled>
+                    <i class="fas fa-exchange-alt"></i> Compare Files
+                </button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing files...</p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="results" id="results">
+            <div class="card">
+                <h2 class="card-title"><i class="fas fa-chart-bar"></i> Comparison Results</h2>
+
+                <div class="stats" id="stats">
+                    <!-- Stats will be populated by JavaScript -->
+                </div>
+
+                <div class="visualization">
+                    <h3 class="visualization-title">Chunk Visualization</h3>
+                    <div class="chunk-map" id="chunk-map">
+                        <!-- Chunk visualization will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title"><i class="fas fa-tasks"></i> Synchronization Plan</h2>
+
+                <div class="operations" id="operations">
+                    <!-- Operations will be populated by JavaScript -->
+                </div>
+
+                <button id="sync-button" class="sync-button">
+                    <i class="fas fa-sync-alt"></i> Synchronize Files
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const oldFileInput = document.getElementById('old-file');
+            const newFileInput = document.getElementById('new-file');
+            const oldFileName = document.getElementById('old-file-name');
+            const newFileName = document.getElementById('new-file-name');
+            const compareButton = document.getElementById('compare-button');
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const error = document.getElementById('error');
+            const stats = document.getElementById('stats');
+            const chunkMap = document.getElementById('chunk-map');
+            const operations = document.getElementById('operations');
+            const syncButton = document.getElementById('sync-button');
+
+            let oldFile = null;
+            let newFile = null;
+
+            // Handle file selection
+            oldFileInput.addEventListener('change', function(e) {
+                if (e.target.files.length > 0) {
+                    oldFile = e.target.files[0];
+                    oldFileName.textContent = oldFile.name;
+                    checkFilesReady();
+                }
+            });
+
+            newFileInput.addEventListener('change', function(e) {
+                if (e.target.files.length > 0) {
+                    newFile = e.target.files[0];
+                    newFileName.textContent = newFile.name;
+                    checkFilesReady();
+                }
+            });
+
+            function checkFilesReady() {
+                if (oldFile && newFile) {
+                    compareButton.disabled = false;
+                } else {
+                    compareButton.disabled = true;
+                }
+            }
+
+            compareButton.addEventListener('click', function() {
+                if (!oldFile || !newFile) return;
+
+                // Reset UI
+                error.textContent = '';
+                results.style.display = 'none';
+                loading.style.display = 'block';
+
+                // Prepare form data
+                const formData = new FormData();
+                formData.append('old_file', oldFile);
+                formData.append('new_file', newFile);
+
+                // Send request to server
+                fetch('/compare', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(err.message || 'Server error');
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    loading.style.display = 'none';
+
+                    if (data.status === 'error') {
+                        throw new Error(data.message);
+                    }
+
+                    // Display results
+                    displayResults(data);
+                    results.style.display = 'block';
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    error.textContent = 'Error: ' + err.message;
+                    console.error('Error:', err);
+                });
+            });
+
+            function displayResults(data) {
+                // Display stats with improved formatting
+                stats.innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-value">${data.diff_report.summary.total_chunks}</div>
+                        <div class="stat-label">Total Chunks</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value stat-unchanged">${data.diff_report.summary.unchanged}</div>
+                        <div class="stat-label">Unchanged</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value stat-added">${data.diff_report.summary.added}</div>
+                        <div class="stat-label">Added (${formatBytes(data.diff_report.summary.bytes_added)})</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value stat-removed">${data.diff_report.summary.removed}</div>
+                        <div class="stat-label">Removed (${formatBytes(data.diff_report.summary.bytes_removed)})</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${formatBytes(data.diff_report.file_stats.old_size)} → ${formatBytes(data.diff_report.file_stats.new_size)}</div>
+                        <div class="stat-label">File Size</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" style="color: ${getChangeColor(data.diff_report.summary.changed_percent)}">
+                            ${data.diff_report.summary.changed_percent.toFixed(1)}%
+                        </div>
+                        <div class="stat-label">Changed</div>
+                    </div>
+                `;
+
+                // Display chunk visualization
+                renderChunkMap(data);
+
+                // Display operations
+                renderSyncOperations(data);
+
+                // Enable/disable sync button
+                syncButton.disabled = data.sync_plan.operations.length === 0;
+            }
+
+            function renderChunkMap(data) {
+                chunkMap.innerHTML = '';
+                const maxWidth = 800; // Max width for visualization
+
+                data.visualization.forEach(chunk => {
+                    const chunkEl = document.createElement('div');
+                    chunkEl.className = 'chunk';
+                    chunkEl.style.backgroundColor = chunk.color;
+
+                    // Calculate width based on chunk size relative to file size
+                    const width = Math.max(5,
+                        (chunk.size / data.diff_report.file_stats.new_size) * maxWidth);
+                    chunkEl.style.width = `${width}px`;
+
+                    const tooltip = document.createElement('div');
+                    tooltip.className = 'chunk-tooltip';
+                    tooltip.textContent = `${chunk.type} chunk (${formatBytes(chunk.size)})`;
+
+                    chunkEl.appendChild(tooltip);
+                    chunkMap.appendChild(chunkEl);
+                });
+            }
+
+            function renderSyncOperations(data) {
+                operations.innerHTML = '';
+
+                if (data.sync_plan.operations.length === 0) {
+                    operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
+                    return;
+                }
+
+                const header = document.createElement('div');
+                header.className = 'operation-header';
+                header.innerHTML = `
+                    <div><strong>Operation</strong></div>
+                    <div><strong>Details</strong></div>
+                    <div><strong>Size</strong></div>
+                `;
+                operations.appendChild(header);
+
+                data.sync_plan.operations.forEach(op => {
+                    const opEl = document.createElement('div');
+                    opEl.className = 'operation';
+
+                    let typeClass = '';
+                    let typeText = '';
+                    let details = '';
+
+                    if (op.type === 'ADD') {
+                        typeClass = 'type-add';
+                        typeText = 'ADD';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                    } else if (op.type === 'REMOVE') {
+                        typeClass = 'type-remove';
+                        typeText = 'REMOVE';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                    }
+
+                    opEl.innerHTML = `
+                        <div>
+                            <span class="operation-type ${typeClass}">${typeText}</span>
+                        </div>
+                        <div>
+                            ${details}
+                            ${op.data ? `<div class="data-preview">${atob(op.data)}</div>` : ''}
+                        </div>
+                        <div>${formatBytes(op.size)}</div>
+                    `;
+
+                    operations.appendChild(opEl);
+                });
+
+                // Add efficiency info
+                if (data.sync_plan.efficiency > 0) {
+                    const efficiencyInfo = document.createElement('div');
+                    efficiencyInfo.className = 'efficiency-info';
+                    efficiencyInfo.innerHTML = `
+                        <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
+                        <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong> (at 10MB/s)</p>
+                    `;
+                    operations.appendChild(efficiencyInfo);
+                }
+            }
+
+            function formatBytes(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            function getChangeColor(percent) {
+                if (percent < 10) return '#4CAF50';  // Green
+                if (percent < 30) return '#FFC107';  // Yellow
+                if (percent < 50) return '#FF9800';  // Orange
+                return '#F44336';  // Red
+            }
+
+            // Handle sync button click
+            syncButton.addEventListener('click', function() {
+                alert('Synchronization would be performed here in a full implementation.\nFor this demo, we would apply the sync plan to update the original file.');
+            });
+        });
+    </script>
+</body>
+</html>

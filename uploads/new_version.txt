@@ -1,0 +1,4 @@
+This is the UPDATED file content.
+It now has four lines instead of three.
+This is line number three.
+And this is a brand new fourth line!
