@@ -1,9 +1,14 @@
 import os
 import sys
 import time
+import base64
+import shutil
+import logging
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
+
+logging.basicConfig(level=logging.DEBUG)
 
 # Add parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -26,6 +31,32 @@ app.secret_key = 'your-secret-key-here'
 
 # Ensure directories exist
 Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
+
+def apply_sync_plan(old_file_path, sync_plan, output_file_path):
+    """Apply the sync plan to create a synchronized file"""
+    with open(old_file_path, 'rb') as f:
+        old_data = f.read()
+
+    new_data = bytearray()
+    for operation in sync_plan:
+        op_type = operation['operation']
+        offset = operation['offset']
+        size = operation['size']
+
+        if op_type == 'ADD':
+            # Decode base64 data and add
+            import base64
+            chunk_data = base64.b64decode(operation['data'])
+            new_data.extend(chunk_data)
+        elif op_type == 'REMOVE':
+            # Skip removed parts (do not add to new_data)
+            continue
+        elif op_type == 'UNCHANGED':
+            # Copy unchanged part from old file
+            new_data.extend(old_data[offset:offset + size])
+
+    with open(new_file_path, 'rb') as src, open(output_file_path, 'wb') as dest:
+            dest.write(src.read())
 
 def determine_chunk_size(file_size: int) -> int:
     """Determine optimal chunk size based on file size"""
@@ -151,6 +182,69 @@ def compare_files():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/synchronize', methods=['POST'])
+def synchronize_files():
+    try:
+        data = request.get_json()
+        operations = data.get('operations', [])
+        old_file_name = data.get('old_file')
+
+        if not old_file_name or not operations:
+            return jsonify({"status": "error", "message": "Missing required data"}), 400
+
+        old_file_path = Path(app.config['UPLOAD_FOLDER']) / old_file_name
+        synced_file_path = Path(app.config['UPLOAD_FOLDER']) / f"synced_{old_file_name}"
+
+        if not old_file_path.exists():
+            return jsonify({"status": "error", "message": "Old file not found"}), 404
+
+        # Step 1: Copy old file to new synced file first
+        shutil.copyfile(old_file_path, synced_file_path)  # This requires shutil
+        logging.debug(f"Old file copied to {synced_file_path}")
+
+        # Step 2: Apply sync plan to the new file
+        try:
+            logging.debug(f"Applying sync plan to {synced_file_path}")
+            
+            # Ensure you are passing the correct operation keys and the file path
+            for operation in operations:
+                op_type = operation.get('type')
+                offset = operation.get('offset')
+                size = operation.get('size')
+                data = operation.get('data')
+
+                if op_type == 'ADD':
+                    # Assuming 'data' is base64 encoded, decode it and add to the file at 'offset'
+                    with open(synced_file_path, 'r+b') as file:
+                        file.seek(offset)
+                        file.write(base64.b64decode(data))
+
+                elif op_type == 'REMOVE':
+                    # Handle removal (just skip the section from the new file)
+                    pass
+
+                # Add more operation types if needed
+
+        except Exception as e:
+            logging.error(f"Error applying sync plan: {str(e)}")
+            return jsonify({
+                "status": "error",
+                "message": f"Error applying sync plan: {str(e)}"
+            }), 500
+
+        return jsonify({
+            "status": "success",
+            "message": "Files synchronized successfully!",
+            "output_file": f"synced_{old_file_name}"
+        })
+
+    except Exception as e:
+        logging.error(f"Unexpected error: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Unexpected error: {str(e)}"
+        }), 500
+            
 @app.route('/uploads/<filename>')
 def serve_uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)

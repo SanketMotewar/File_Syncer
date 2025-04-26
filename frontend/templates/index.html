@@ -473,6 +473,10 @@
             let oldFile = null;
             let newFile = null;
 
+            let syncPlan = null;
+            let oldFilename = null;
+            let newFilename = null;
+
             // Handle file selection
             oldFileInput.addEventListener('change', function(e) {
                 if (e.target.files.length > 0) {
@@ -498,52 +502,86 @@
                 }
             }
 
-            compareButton.addEventListener('click', function() {
-                if (!oldFile || !newFile) return;
+        compareButton.addEventListener('click', function() {
+            if (!oldFile || !newFile) return;
 
-                // Reset UI
-                error.textContent = '';
-                results.style.display = 'none';
-                loading.style.display = 'block';
+            error.textContent = '';
+            results.style.display = 'none';
+            loading.style.display = 'block';
 
-                // Prepare form data
-                const formData = new FormData();
-                formData.append('old_file', oldFile);
-                formData.append('new_file', newFile);
+            const formData = new FormData();
+            formData.append('old_file', oldFile);
+            formData.append('new_file', newFile);
 
-                // Send request to server
-                fetch('/compare', {
-                    method: 'POST',
-                    body: formData,
-                    headers: {
-                        'X-Chunk-Size': '64'  // Optional: send as header if needed
-                    }
-                }) 
-                .then(response => {
-                    if (!response.ok) {
-                        return response.json().then(err => {
-                            throw new Error(err.message || 'Server error');
-                        });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    loading.style.display = 'none';
+            fetch('/compare', {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-Chunk-Size': '64' }
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Server error');
+                return response.json();
+            })
+            .then(data => {
+                loading.style.display = 'none';
+                if (data.status !== 'success') throw new Error(data.message || 'Comparison failed');
+                
+                // Store synchronization data properly
+                window.syncData = {
+                    old_filename: data.old_filename,
+                    new_filename: data.new_filename,
+                    sync_plan: data.sync_plan.operations  // Extract operations array
+                };
 
-                    if (data.status === 'error') {
-                        throw new Error(data.message);
-                    }
-
-                    // Display results
-                    displayResults(data);
-                    results.style.display = 'block';
-                })
-                .catch(err => {
-                    loading.style.display = 'none';
-                    error.textContent = 'Error: ' + err.message;
-                    console.error('Error:', err);
-                });
+                displayResults(data);
+                results.style.display = 'block';
+                syncButton.disabled = false;
+            })
+            .catch(err => {
+                loading.style.display = 'none';
+                error.textContent = `Comparison Error: ${err.message}`;
+                console.error('Comparison error:', err);
             });
+        });
+
+        syncButton.addEventListener('click', function() {
+            if (!window.syncData) {
+                error.textContent = 'Please compare files first';
+                return;
+            }
+
+            loading.style.display = 'block';
+            error.textContent = '';
+
+            fetch('/synchronize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    old_file: window.syncData.old_filename,
+                    new_file: window.syncData.new_filename,
+                    operations: window.syncData.sync_plan  // Send operations array directly
+                })
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Synchronization failed');
+                return response.json();
+            })
+            .then(data => {
+                loading.style.display = 'none';
+                if (data.status === 'success') {
+                    alert(`Success: ${data.message}`);
+                    window.syncData = null;  // Clear sync data
+                    syncButton.disabled = true;
+                } else {
+                    throw new Error(data.message);
+                }
+            })
+            .catch(err => {
+                loading.style.display = 'none';
+                error.textContent = `Sync Error: ${err.message}`;
+                console.error('Synchronization error:', err);
+            });
+        });
 
     function displayResults(data) {
         // Updated data validation
