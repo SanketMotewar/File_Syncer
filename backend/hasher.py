@@ -21,15 +21,16 @@ class FileHasher:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        # Use line-based chunking for small text files
-        if self.is_text_file(file_path) and os.path.getsize(file_path) < 1024:
-            chunks = self.line_based_chunks(file_path)
-        else:
-            chunks = self.chunker.chunk_file_rolling(file_path)
+        # Determine chunking method
+        # if self.is_text_file(file_path):
+        #     chunks = self.line_based_chunks(file_path)
+        # else:
+        chunks = self.chunker.chunk_file_rolling(file_path)
 
         chunk_info = []
         hashes = []
 
+        # Process chunks
         for i, (start, end) in enumerate(chunks):
             with open(file_path, 'rb') as f:
                 f.seek(start)
@@ -44,6 +45,12 @@ class FileHasher:
                     "filepath": file_path
                 })
                 hashes.append(chunk_hash)
+
+        # Debug logging
+        print(f"\nChunk map for {os.path.basename(file_path)}:")
+        for chunk in chunk_info:
+            decoded = base64.b64decode(chunk['data']).decode('utf-8', errors='replace')
+            print(f"Chunk {chunk['index']:02d} [{chunk['offset']:04d}-{chunk['offset']+chunk['size']:04d}]: {decoded!r}")
 
         return {
             "filepath": file_path,

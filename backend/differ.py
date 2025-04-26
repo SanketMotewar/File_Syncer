@@ -58,7 +58,7 @@ class FileDiffer:
                     best_similarity = similarity
                     best_match = old_c
 
-            if best_match and best_similarity > 0.3:  # 30% similarity threshold
+            if best_match and best_similarity > 0.7:  # 30% similarity threshold
                 result["modified_chunks"].append({
                     "old_chunk": best_match,
                     "new_chunk": new_c
@@ -80,9 +80,10 @@ class FileDiffer:
         result["stats"]["bytes_removed"] = sum(c['size'] for c in result["removed_chunks"])
 
         # Calculate percentages
-        total_chunks = len(new_chunks)
-        changed = result["stats"]["added"] + result["stats"]["modified"]
-        result["stats"]["total_chunks"] = total_chunks
+        total_chunks = max(len(old_chunks), len(new_chunks))  # Use max of both files
+        changed = (result["stats"]["added"] + 
+                result["stats"]["removed"] + 
+                result["stats"]["modified"])
         result["stats"]["changed_percent"] = min(
             (changed / total_chunks) * 100 if total_chunks else 0,
             100.0
