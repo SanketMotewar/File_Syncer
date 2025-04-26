@@ -1,74 +1,68 @@
 from typing import Dict, List, Any
-from collections import defaultdict
 
 class FileDiffer:
     def compare_files(self, old_map: Dict[str, Any], new_map: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Compare two file chunk maps and return differences
-        Returns: {
-            "unchanged_chunks": List[Dict],
-            "added_chunks": List[Dict],
-            "removed_chunks": List[Dict],
-            "modified_chunks": List[Dict],
-            "stats": {
-                "total_chunks": int,
-                "changed_percentage": float,
-                "bytes_changed": int
-            }
-        }
-        """
         result = {
             "unchanged_chunks": [],
             "added_chunks": [],
             "removed_chunks": [],
             "modified_chunks": [],
             "stats": {
-                "total_chunks": 0,
-                "changed_percentage": 0.0,
-                "bytes_changed": 0
+                "total_chunks": len(new_map.get('chunks', [])),
+                "unchanged": 0,
+                "added": 0,
+                "removed": 0,
+                "modified": 0,
+                "changed_percent": 0.0,
+                "bytes_changed": 0,
+                "bytes_added": 0,
+                "bytes_removed": 0,
+                "old_size": sum(c['size'] for c in old_map.get('chunks', [])),
+                "new_size": sum(c['size'] for c in new_map.get('chunks', []))
             }
         }
 
-        # Create quick lookup maps
-        old_hash_map = {chunk['hash']: chunk for chunk in old_map.get('chunks', [])}
-        new_hash_map = {chunk['hash']: chunk for chunk in new_map.get('chunks', [])}
+        old_chunks = old_map.get('chunks', [])
+        new_chunks = new_map.get('chunks', [])
 
-        # Log the hash maps for debugging
-        print("Old Hash Map:", old_hash_map)
-        print("New Hash Map:", new_hash_map)
+        # Find matching chunks
+        for new_idx, new_chunk in enumerate(new_chunks):
+            matched = False
+            for old_idx, old_chunk in enumerate(old_chunks):
+                if new_chunk['hash'] == old_chunk['hash']:
+                    result["unchanged_chunks"].append(new_chunk)
+                    result["stats"]["unchanged"] += 1
+                    matched = True
+                    break
+            
+            if not matched:
+                # Check for modified chunks (similar position but different hash)
+                for old_chunk in old_chunks:
+                    if abs(new_chunk['offset'] - old_chunk['offset']) < 10:  # Similar position
+                        result["modified_chunks"].append({
+                            "old_chunk": old_chunk,
+                            "new_chunk": new_chunk
+                        })
+                        result["stats"]["modified"] += 1
+                        result["stats"]["bytes_changed"] += new_chunk['size']
+                        matched = True
+                        break
+                
+                if not matched:
+                    result["added_chunks"].append(new_chunk)
+                    result["stats"]["added"] += 1
+                    result["stats"]["bytes_added"] += new_chunk['size']
 
-        # Find common and unique hashes
-        common_hashes = set(old_hash_map.keys()) & set(new_hash_map.keys())
-        added_hashes = set(new_hash_map.keys()) - set(old_hash_map.keys())
-        removed_hashes = set(old_hash_map.keys()) - set(new_hash_map.keys())
+        # Find removed chunks
+        for old_chunk in old_chunks:
+            if not any(c['hash'] == old_chunk['hash'] for c in new_chunks):
+                result["removed_chunks"].append(old_chunk)
+                result["stats"]["removed"] += 1
+                result["stats"]["bytes_removed"] += old_chunk['size']
 
-        # Process unchanged chunks
-        for hash_val in common_hashes:
-            result["unchanged_chunks"].append(new_hash_map[hash_val])
+        # Calculate changed percentage
+        total_changes = result["stats"]["added"] + result["stats"]["removed"] + result["stats"]["modified"]
+        result["stats"]["changed_percent"] = (total_changes / result["stats"]["total_chunks"]) * 100
 
-        # Process added chunks
-        for hash_val in added_hashes:
-            result["added_chunks"].append(new_hash_map[hash_val])
-
-        # Process removed chunks
-        for hash_val in removed_hashes:
-            result["removed_chunks"].append(old_hash_map[hash_val])
-
-        # Calculate statistics
-        total_chunks = len(new_map.get('chunks', []))
-        changed_chunks = (len(result["added_chunks"]) +
-                          len(result["removed_chunks"]))
-
-        bytes_changed = sum(c["size"] for c in result["added_chunks"])
-        bytes_changed += sum(c["size"] for c in result["removed_chunks"])
-
-        result["stats"] = {
-            "total_chunks": total_chunks,
-            "changed_percentage": (changed_chunks / total_chunks * 100) if total_chunks > 0 else 0,
-            "bytes_changed": bytes_changed
-        }
-
-        # Log the result for debugging
         print("Comparison Result:", result)
-
         return result

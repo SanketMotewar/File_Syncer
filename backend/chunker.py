@@ -2,38 +2,14 @@ import os
 from typing import List, Dict, Any, Tuple
 
 class FileChunker:
-    def __init__(self, chunk_size: int = 16, window_size: int = 48):
-        self.chunk_size = chunk_size
+    def __init__(self, avg_chunk_size: int = 64, window_size: int = 48):
+        self.avg_chunk_size = avg_chunk_size
         self.window_size = window_size
-
-    def chunk_file(self, file_path: str) -> List[Dict[str, Any]]:
-        """Split file into fixed-size chunks with metadata"""
-        print(f"Chunking file: {file_path}")  # Debugging statement
-        chunks = []
-        if not os.path.exists(file_path):
-            return chunks
-
-        with open(file_path, 'rb') as f:
-            offset = 0
-            while True:
-                chunk_data = f.read(self.chunk_size)
-                if not chunk_data:
-                    break
-                chunks.append({
-                    "offset": offset,
-                    "size": len(chunk_data),
-                    "data": chunk_data
-                })
-                offset += len(chunk_data)
-
-        # Log the chunks for debugging
-        for chunk in chunks:
-            print(f"Chunk: offset={chunk['offset']}, size={chunk['size']}, data={chunk['data'][:20]}...")
-
-        return chunks
+        self.prime = 31
+        self.mod = 1 << 32
 
     def chunk_file_rolling(self, file_path: str) -> List[Tuple[int, int]]:
-        """Split file using rolling hash for content-defined chunking"""
+        """Improved content-defined chunking"""
         chunks = []
         if not os.path.exists(file_path):
             return chunks
@@ -49,41 +25,41 @@ class FileChunker:
             return [(0, n)]
 
         i = 0
-        while i < n - self.window_size:
-            window = data[i:i+self.window_size]
-            hash_val = self._rolling_hash(window)
+        min_chunk = self.avg_chunk_size // 2
+        max_chunk = self.avg_chunk_size * 2
 
-            j = i + self.window_size
-            while j < n:
-                if self._is_boundary(hash_val):
-                    chunks.append((i, j))
-                    i = j
-                    break
-                if j < n - 1:
-                    hash_val = self._update_rolling_hash(hash_val, data[j], data[j-self.window_size])
-                j += 1
-            else:
-                chunks.append((i, n))
-                break
+        while i < n:
+            chunk_start = i
+            chunk_end = min(i + max_chunk, n)
+            boundary = self._find_boundary(data, chunk_start, chunk_end)
+            chunks.append((chunk_start, boundary))
+            i = boundary
 
         return chunks
 
+    def _find_boundary(self, data: bytes, start: int, end: int) -> int:
+        """Find chunk boundary using rolling hash"""
+        if end - start <= self.window_size:
+            return end
+
+        window = data[start:start+self.window_size]
+        hash_val = self._rolling_hash(window)
+        
+        for i in range(start + self.window_size, end):
+            if (hash_val % self.avg_chunk_size) == (self.avg_chunk_size - 1):
+                return i
+            hash_val = self._update_rolling_hash(hash_val, data[i], data[i-self.window_size])
+        
+        return end
+
     def _rolling_hash(self, data: bytes) -> int:
-        """Simple rolling hash implementation"""
-        prime = 31
-        mod = 1 << 32
+        """Calculate initial rolling hash"""
         hash_val = 0
-        for byte in data:
-            hash_val = (hash_val * prime + byte) % mod
+        for i, byte in enumerate(data):
+            hash_val = (hash_val * self.prime + byte) % self.mod
         return hash_val
 
     def _update_rolling_hash(self, current_hash: int, new_byte: int, old_byte: int) -> int:
-        """Update rolling hash value"""
-        prime = 31
-        mod = 1 << 32
-        window_size = self.window_size
-        return (current_hash * prime - old_byte * (prime ** window_size) + new_byte) % mod
-
-    def _is_boundary(self, hash_val: int) -> bool:
-        """Determine if hash value indicates a chunk boundary"""
-        return (hash_val & 0xFFFF) == 0
+        """Update rolling hash efficiently"""
+        power = pow(self.prime, self.window_size - 1, self.mod)
+        return ((current_hash - old_byte * power) * self.prime + new_byte) % self.mod  # Fixed parentheses

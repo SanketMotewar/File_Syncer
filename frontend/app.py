@@ -1,67 +1,96 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
 import os
-from werkzeug.utils import secure_filename
-from backend.syncer import FileSyncer
+import sys
 import time
 from pathlib import Path
-from typing import Dict, List
+from flask import Flask, render_template, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
 
-# Initialize Flask app
-app = Flask(__name__, 
-            template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
-            static_folder=os.path.join(os.path.dirname(__file__), 'static'))
+# Add parent directory to Python path
+sys.path.append(str(Path(__file__).parent.parent))
+from backend.syncer import FileSyncer
 
-# Configuration
+# Initialize Flask app with correct paths
+from pathlib import Path
+
+# Get the base directory
+BASE_DIR = Path(__file__).parent.parent
+
+# Initialize Flask app with absolute paths
+app = Flask(__name__,
+            template_folder=str(BASE_DIR / 'frontend' / 'templates'),
+            static_folder=str(BASE_DIR / 'frontend' / 'static'))# Configuration
+
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
 app.secret_key = 'your-secret-key-here'
 
-# Ensure upload directory exists
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+# Ensure directories exist
+Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
 
 def determine_chunk_size(file_size: int) -> int:
     """Determine optimal chunk size based on file size"""
-    if file_size < 1024:  # < 1KB
+    if file_size < 1024:
         return 64
-    elif file_size < 1024 * 1024:  # < 1MB
+    elif file_size < 1024 * 1024:
         return 1024
-    elif file_size < 10 * 1024 * 1024:  # < 10MB
+    elif file_size < 10 * 1024 * 1024:
         return 4096
-    else:  # >= 10MB
-        return 8192
+    return 8192
 
-def prepare_visualization(diff_report: Dict) -> List[Dict]:
+def prepare_visualization(diff_report: dict) -> list:
     """Prepare data for visual chunk comparison"""
     visualization = []
     
+    colors = {
+        "added": "#4CAF50",
+        "removed": "#F44336",
+        "unchanged": "#9E9E9E",
+        "modified": "#FFC107"  # Added modified color
+    }
+
+    # Process modified chunks first for visual priority
+    for mod in diff_report.get("details", {}).get("modified_chunks", []):
+        new_chunk = mod.get("new_chunk", {})
+        visualization.append({
+            "index": new_chunk.get("index", 0),
+            "type": "modified",
+            "size": new_chunk.get("size", 0),
+            "color": colors["modified"],
+            "old_offset": mod.get("old_chunk", {}).get("offset", 0),  # Additional context
+            "new_offset": new_chunk.get("offset", 0)
+        })
+
     # Process added chunks
-    for chunk in diff_report["details"].get("added_chunks", []):
+    for chunk in diff_report.get("details", {}).get("added_chunks", []):
         visualization.append({
             "index": chunk.get("index", 0),
             "type": "added",
-            "size": chunk["size"],
-            "color": "#4CAF50"  # Green
+            "size": chunk.get("size", 0),
+            "color": colors["added"],
+            "offset": chunk.get("offset", 0)
         })
-    
-    # Process removed chunks
-    for chunk in diff_report["details"].get("removed_chunks", []):
+
+    # Process removed chunks (reference old indexes)
+    for chunk in diff_report.get("details", {}).get("removed_chunks", []):
         visualization.append({
             "index": chunk.get("index", 0),
             "type": "removed",
-            "size": chunk["size"],
-            "color": "#F44336"  # Red
+            "size": chunk.get("size", 0),
+            "color": colors["removed"],
+            "offset": chunk.get("offset", 0)
         })
-    
-    # Process unchanged chunks
-    for chunk in diff_report["details"].get("unchanged_chunks", []):
+
+    # Process unchanged chunks last
+    for chunk in diff_report.get("details", {}).get("unchanged_chunks", []):
         visualization.append({
             "index": chunk.get("index", 0),
             "type": "unchanged",
-            "size": chunk["size"],
-            "color": "#9E9E9E"  # Gray
+            "size": chunk.get("size", 0),
+            "color": colors["unchanged"],
+            "offset": chunk.get("offset", 0)
         })
-    
-    # Sort by index
+
+    # Sort by chunk index in new file
     visualization.sort(key=lambda x: x["index"])
     
     return visualization
@@ -73,51 +102,52 @@ def home():
 @app.route('/compare', methods=['POST'])
 def compare_files():
     try:
-        # Validate request
         if 'old_file' not in request.files or 'new_file' not in request.files:
             return jsonify({"status": "error", "message": "Both files are required"}), 400
-        
+
         old_file = request.files['old_file']
         new_file = request.files['new_file']
-        
-        if old_file.filename == '' or new_file.filename == '':
+
+        if not old_file.filename or not new_file.filename:
             return jsonify({"status": "error", "message": "No files selected"}), 400
-        
+
         # Secure filenames and save files
         old_filename = secure_filename(old_file.filename)
         new_filename = secure_filename(new_file.filename)
+        upload_dir = Path(app.config['UPLOAD_FOLDER'])
         
-        old_path = os.path.join(app.config['UPLOAD_FOLDER'], old_filename)
-        new_path = os.path.join(app.config['UPLOAD_FOLDER'], new_filename)
+        old_path = upload_dir / old_filename
+        new_path = upload_dir / new_filename
         
-        old_file.save(old_path)
-        new_file.save(new_path)
-        
-        # Analyze files with dynamic chunk sizing
-        file_size = max(os.path.getsize(old_path), os.path.getsize(new_path))
+        old_file.save(str(old_path))
+        new_file.save(str(new_path))
+
+        # Determine chunk size
+        file_size = max(old_path.stat().st_size, new_path.stat().st_size)
         chunk_size = determine_chunk_size(file_size)
         
+        # Analyze files
         syncer = FileSyncer(chunk_size=chunk_size)
         start_time = time.time()
-        analysis = syncer.analyze_files(old_path, new_path)
-        
-        if not analysis['success']:
-            return jsonify({"status": "error", "message": analysis['error']}), 400
-        
-        # Generate sync plan and visualization
+        analysis = syncer.analyze_files(str(old_path), str(new_path))
+
+        if not analysis.get('success', False):
+            return jsonify({"status": "error", "message": analysis.get('error', 'Unknown error')}), 400
+
+        # Prepare response
         sync_plan = syncer.generate_sync_plan(analysis)
-        visualization = prepare_visualization(analysis['data'])
-        
+        visualization = prepare_visualization(analysis.get('data', {}))
+
         return jsonify({
             "status": "success",
-            "diff_report": analysis['data'],
+            "diff_report": analysis.get('data', {}),
             "sync_plan": sync_plan,
             "visualization": visualization,
             "analysis_time": time.time() - start_time,
             "old_filename": old_filename,
             "new_filename": new_filename
         })
-        
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -126,4 +156,4 @@ def serve_uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)

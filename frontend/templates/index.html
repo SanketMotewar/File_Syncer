@@ -226,6 +226,15 @@
             z-index: 1;
         }
 
+        .type-modify {
+            background-color: #FFF8E1;
+            color: #FFC107;
+        }
+        
+        .stat-modified {
+            color: #FFC107;
+        }
+
         .chunk-tooltip {
             position: absolute;
             bottom: 100%;
@@ -505,8 +514,11 @@
                 // Send request to server
                 fetch('/compare', {
                     method: 'POST',
-                    body: formData
-                })
+                    body: formData,
+                    headers: {
+                        'X-Chunk-Size': '64'  // Optional: send as header if needed
+                    }
+                }) 
                 .then(response => {
                     if (!response.ok) {
                         return response.json().then(err => {
@@ -533,37 +545,46 @@
                 });
             });
 
-            function displayResults(data) {
-                // Display stats with improved formatting
-                stats.innerHTML = `
-                    <div class="stat-card">
-                        <div class="stat-value">${data.diff_report.summary.total_chunks}</div>
-                        <div class="stat-label">Total Chunks</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-unchanged">${data.diff_report.summary.unchanged}</div>
-                        <div class="stat-label">Unchanged</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-added">${data.diff_report.summary.added}</div>
-                        <div class="stat-label">Added (${formatBytes(data.diff_report.summary.bytes_added)})</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-removed">${data.diff_report.summary.removed}</div>
-                        <div class="stat-label">Removed (${formatBytes(data.diff_report.summary.bytes_removed)})</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${formatBytes(data.diff_report.file_stats.old_size)} → ${formatBytes(data.diff_report.file_stats.new_size)}</div>
-                        <div class="stat-label">File Size</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" style="color: ${getChangeColor(data.diff_report.summary.changed_percent)}">
-                            ${data.diff_report.summary.changed_percent.toFixed(1)}%
-                        </div>
-                        <div class="stat-label">Changed</div>
-                    </div>
-                `;
+    function displayResults(data) {
+        // Updated data validation
+        if (!data || !data.diff_report || !data.diff_report.summary) {
+            error.textContent = 'Error: Invalid data format received from server';
+            console.error('Invalid data format:', data);
+            return;
+        }
 
+        // Corrected summary reference
+        const summary = data.diff_report.summary || {};
+        
+        // Updated stats display with proper field names
+        stats.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-value">${summary.total_chunks || 0}</div>
+                <div class="stat-label">Total Chunks</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value stat-unchanged">${summary.unchanged || 0}</div>
+                <div class="stat-label">Unchanged</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value stat-added">${summary.added || 0}</div>
+                <div class="stat-label">Added (${formatBytes(summary.bytes_added || 0)})</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value stat-removed">${summary.removed || 0}</div>
+                <div class="stat-label">Removed (${formatBytes(summary.bytes_removed || 0)})</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">${formatBytes(summary.old_size || 0)} → ${formatBytes(summary.new_size || 0)}</div>
+                <div class="stat-label">File Size</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: ${getChangeColor(summary.changed_percent || 0)}">
+                    ${(summary.changed_percent || 0).toFixed(1)}%
+                </div>
+                <div class="stat-label">Changed</div>
+            </div>
+        `;
                 // Display chunk visualization
                 renderChunkMap(data);
 
@@ -574,110 +595,121 @@
                 syncButton.disabled = data.sync_plan.operations.length === 0;
             }
 
-            function renderChunkMap(data) {
-                chunkMap.innerHTML = '';
-                const maxWidth = 800; // Max width for visualization
+        function renderChunkMap(data) {
+            chunkMap.innerHTML = '';
+            const maxWidth = 800; // Max width for visualization
 
-                data.visualization.forEach(chunk => {
-                    const chunkEl = document.createElement('div');
-                    chunkEl.className = 'chunk';
-                    chunkEl.style.backgroundColor = chunk.color;
+            // Use summary.new_size with fallback to 1 to prevent division by zero
+            const newSize = data.diff_report.summary.new_size || 1;
 
-                    // Calculate width based on chunk size relative to file size
-                    const width = Math.max(5,
-                        (chunk.size / data.diff_report.file_stats.new_size) * maxWidth);
-                    chunkEl.style.width = `${width}px`;
+            data.visualization.forEach(chunk => {
+                const chunkEl = document.createElement('div');
+                chunkEl.className = 'chunk';
+                chunkEl.style.backgroundColor = chunk.color;
 
-                    const tooltip = document.createElement('div');
-                    tooltip.className = 'chunk-tooltip';
-                    tooltip.textContent = `${chunk.type} chunk (${formatBytes(chunk.size)})`;
+                // Calculate width using summary.new_size from diff_report
+                const width = Math.max(5, (chunk.size / newSize) * maxWidth);
+                chunkEl.style.width = `${width}px`;
 
-                    chunkEl.appendChild(tooltip);
-                    chunkMap.appendChild(chunkEl);
-                });
-            }
+                const tooltip = document.createElement('div');
+                tooltip.className = 'chunk-tooltip';
+                tooltip.textContent = `${chunk.type} chunk (${formatBytes(chunk.size)})`;
 
-            function renderSyncOperations(data) {
-                operations.innerHTML = '';
-
-                if (data.sync_plan.operations.length === 0) {
-                    operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
-                    return;
-                }
-
-                const header = document.createElement('div');
-                header.className = 'operation-header';
-                header.innerHTML = `
-                    <div><strong>Operation</strong></div>
-                    <div><strong>Details</strong></div>
-                    <div><strong>Size</strong></div>
-                `;
-                operations.appendChild(header);
-
-                data.sync_plan.operations.forEach(op => {
-                    const opEl = document.createElement('div');
-                    opEl.className = 'operation';
-
-                    let typeClass = '';
-                    let typeText = '';
-                    let details = '';
-
-                    if (op.type === 'ADD') {
-                        typeClass = 'type-add';
-                        typeText = 'ADD';
-                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-                    } else if (op.type === 'REMOVE') {
-                        typeClass = 'type-remove';
-                        typeText = 'REMOVE';
-                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-                    }
-
-                    opEl.innerHTML = `
-                        <div>
-                            <span class="operation-type ${typeClass}">${typeText}</span>
-                        </div>
-                        <div>
-                            ${details}
-                            ${op.data ? `<div class="data-preview">${atob(op.data)}</div>` : ''}
-                        </div>
-                        <div>${formatBytes(op.size)}</div>
-                    `;
-
-                    operations.appendChild(opEl);
-                });
-
-                // Add efficiency info
-                if (data.sync_plan.efficiency > 0) {
-                    const efficiencyInfo = document.createElement('div');
-                    efficiencyInfo.className = 'efficiency-info';
-                    efficiencyInfo.innerHTML = `
-                        <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
-                        <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong> (at 10MB/s)</p>
-                    `;
-                    operations.appendChild(efficiencyInfo);
-                }
-            }
-
-            function formatBytes(bytes) {
-                if (bytes === 0) return '0 Bytes';
-                const k = 1024;
-                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-            }
-
-            function getChangeColor(percent) {
-                if (percent < 10) return '#4CAF50';  // Green
-                if (percent < 30) return '#FFC107';  // Yellow
-                if (percent < 50) return '#FF9800';  // Orange
-                return '#F44336';  // Red
-            }
-
-            // Handle sync button click
-            syncButton.addEventListener('click', function() {
-                alert('Synchronization would be performed here in a full implementation.\nFor this demo, we would apply the sync plan to update the original file.');
+                chunkEl.appendChild(tooltip);
+                chunkMap.appendChild(chunkEl);
             });
+        }            
+
+        function renderSyncOperations(data) {
+            operations.innerHTML = '';
+
+            if (data.sync_plan.operations.length === 0) {
+                operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
+                return;
+            }
+
+            const header = document.createElement('div');
+            header.className = 'operation-header';
+            header.innerHTML = `
+                <div><strong>Operation</strong></div>
+                <div><strong>Details</strong></div>
+                <div><strong>Size</strong></div>
+            `;
+            operations.appendChild(header);
+
+            data.sync_plan.operations.forEach(op => {
+                const opEl = document.createElement('div');
+                opEl.className = 'operation';
+
+                let typeClass = '';
+                let typeText = '';
+                let details = '';
+                let dataPreview = '';
+
+                if (op.type === 'ADD') {
+                    typeClass = 'type-add';
+                    typeText = 'ADD';
+                    details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                    if (op.data) {
+                        dataPreview = `<div class="data-preview">${op.data}</div>`;
+                    }
+                } else if (op.type === 'REMOVE') {
+                    typeClass = 'type-remove';
+                    typeText = 'REMOVE';
+                    details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                } else if (op.type === 'MODIFY') {
+                    typeClass = 'type-modify';
+                    typeText = 'MODIFY';
+                    details = `Old: ${op.old_offset}, New: ${op.new_offset}, Size: ${op.size} bytes`;
+                }
+
+                opEl.innerHTML = `
+                    <div>
+                        <span class="operation-type ${typeClass}">${typeText}</span>
+                    </div>
+                    <div>
+                        ${details}
+                        ${dataPreview}
+                    </div>
+                    <div>${formatBytes(op.size)}</div>
+                `;
+
+                operations.appendChild(opEl);
+            });
+
+            // Add efficiency info
+            if (data.sync_plan.efficiency > 0) {
+                const efficiencyInfo = document.createElement('div');
+                efficiencyInfo.className = 'efficiency-info';
+                efficiencyInfo.innerHTML = `
+                    <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
+                    <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong> (at 10MB/s)</p>
+                `;
+                operations.appendChild(efficiencyInfo);
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function getChangeColor(percent) {
+            if (percent < 10) return '#4CAF50';
+            if (percent < 30) return '#FFC107';
+            if (percent < 50) return '#FF9800';
+            return '#F44336';
+        }
+
+        // Handle sync button click
+        syncButton.addEventListener('click', function() {
+            alert('Synchronization would be performed here in a full implementation.\nFor this demo, we would apply the sync plan to update the original file.');
         });
+    });
+       
     </script>
 </body>
 </html>
