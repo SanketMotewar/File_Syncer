@@ -580,7 +580,7 @@
             </div>
             <div class="stat-card">
                 <div class="stat-value" style="color: ${getChangeColor(summary.changed_percent || 0)}">
-                    ${(summary.changed_percent || 0).toFixed(1)}%
+                    ${Math.min(summary.changed_percent, 100).toFixed(1)}%
                 </div>
                 <div class="stat-label">Changed</div>
             </div>

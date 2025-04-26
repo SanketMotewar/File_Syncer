@@ -29,13 +29,13 @@ Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
 
 def determine_chunk_size(file_size: int) -> int:
     """Determine optimal chunk size based on file size"""
-    if file_size < 1024:
-        return 64
-    elif file_size < 1024 * 1024:
+    if file_size < 512:  # New threshold for small text files
+        return 16
+    elif file_size < 1024 * 1024:  # < 1MB
         return 1024
-    elif file_size < 10 * 1024 * 1024:
+    elif file_size < 10 * 1024 * 1024:  # < 10MB
         return 4096
-    return 8192
+    return 8192  # For files >= 10MB
 
 def prepare_visualization(diff_report: dict) -> list:
     """Prepare data for visual chunk comparison"""

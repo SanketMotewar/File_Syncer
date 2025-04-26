@@ -1,4 +1,5 @@
 from typing import Dict, List, Any
+import base64
 
 class FileDiffer:
     def compare_files(self, old_map: Dict[str, Any], new_map: Dict[str, Any]) -> Dict[str, Any]:
@@ -8,7 +9,7 @@ class FileDiffer:
             "removed_chunks": [],
             "modified_chunks": [],
             "stats": {
-                "total_chunks": len(new_map.get('chunks', [])),
+                "total_chunks": 0,
                 "unchanged": 0,
                 "added": 0,
                 "removed": 0,
@@ -24,45 +25,77 @@ class FileDiffer:
 
         old_chunks = old_map.get('chunks', [])
         new_chunks = new_map.get('chunks', [])
+        old_hash_map = {c['hash']: c for c in old_chunks}
 
-        # Find matching chunks
-        for new_idx, new_chunk in enumerate(new_chunks):
-            matched = False
-            for old_idx, old_chunk in enumerate(old_chunks):
-                if new_chunk['hash'] == old_chunk['hash']:
-                    result["unchanged_chunks"].append(new_chunk)
-                    result["stats"]["unchanged"] += 1
-                    matched = True
-                    break
-            
-            if not matched:
-                # Check for modified chunks (similar position but different hash)
-                for old_chunk in old_chunks:
-                    if abs(new_chunk['offset'] - old_chunk['offset']) < 10:  # Similar position
-                        result["modified_chunks"].append({
-                            "old_chunk": old_chunk,
-                            "new_chunk": new_chunk
-                        })
-                        result["stats"]["modified"] += 1
-                        result["stats"]["bytes_changed"] += new_chunk['size']
-                        matched = True
-                        break
+        # Track matched chunks
+        matched_old = set()
+        matched_new = set()
+
+        # First pass - find exact matches
+        for new_idx, new_c in enumerate(new_chunks):
+            if new_c['hash'] in old_hash_map:
+                old_c = old_hash_map[new_c['hash']]
+                result["unchanged_chunks"].append(new_c)
+                result["stats"]["unchanged"] += 1
+                matched_old.add(old_c['index'])
+                matched_new.add(new_idx)
+
+        # Second pass - find modified chunks using content comparison
+        for new_idx, new_c in enumerate(new_chunks):
+            if new_idx in matched_new:
+                continue
                 
-                if not matched:
-                    result["added_chunks"].append(new_chunk)
-                    result["stats"]["added"] += 1
-                    result["stats"]["bytes_added"] += new_chunk['size']
+            best_match = None
+            best_similarity = 0
+            
+            for old_c in old_chunks:
+                if old_c['index'] in matched_old:
+                    continue
+                
+                # Simple similarity check (could be improved)
+                similarity = self.calculate_similarity(old_c['data'], new_c['data'])
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = old_c
 
-        # Find removed chunks
-        for old_chunk in old_chunks:
-            if not any(c['hash'] == old_chunk['hash'] for c in new_chunks):
-                result["removed_chunks"].append(old_chunk)
-                result["stats"]["removed"] += 1
-                result["stats"]["bytes_removed"] += old_chunk['size']
+            if best_match and best_similarity > 0.3:  # 30% similarity threshold
+                result["modified_chunks"].append({
+                    "old_chunk": best_match,
+                    "new_chunk": new_c
+                })
+                result["stats"]["modified"] += 1
+                result["stats"]["bytes_changed"] += new_c['size']
+                matched_old.add(best_match['index'])
+                matched_new.add(new_idx)
 
-        # Calculate changed percentage
-        total_changes = result["stats"]["added"] + result["stats"]["removed"] + result["stats"]["modified"]
-        result["stats"]["changed_percent"] = (total_changes / result["stats"]["total_chunks"]) * 100
+        # Identify remaining additions and removals
+        result["added_chunks"] = [new_c for idx, new_c in enumerate(new_chunks) 
+                                if idx not in matched_new]
+        result["stats"]["added"] = len(result["added_chunks"])
+        result["stats"]["bytes_added"] = sum(c['size'] for c in result["added_chunks"])
 
-        print("Comparison Result:", result)
+        result["removed_chunks"] = [old_c for idx, old_c in enumerate(old_chunks)
+                                   if idx not in matched_old]
+        result["stats"]["removed"] = len(result["removed_chunks"])
+        result["stats"]["bytes_removed"] = sum(c['size'] for c in result["removed_chunks"])
+
+        # Calculate percentages
+        total_chunks = len(new_chunks)
+        changed = result["stats"]["added"] + result["stats"]["modified"]
+        result["stats"]["total_chunks"] = total_chunks
+        result["stats"]["changed_percent"] = min(
+            (changed / total_chunks) * 100 if total_chunks else 0,
+            100.0
+        )
+
+        print(f"Change Analysis: {changed}/{total_chunks} chunks changed")
         return result
+
+    @staticmethod
+    def calculate_similarity(a: str, b: str) -> float:
+        """Basic content similarity score between two base64 strings"""
+        a_data = base64.b64decode(a)
+        b_data = base64.b64decode(b)
+        max_len = max(len(a_data), len(b_data))
+        matches = sum(1 for x, y in zip(a_data, b_data) if x == y)
+        return matches / max_len if max_len else 0

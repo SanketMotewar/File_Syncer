@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class FileSyncer:
-    def __init__(self, chunk_size: int = 64):  # Add chunk_size parameter here
+    def __init__(self, chunk_size: int = 16):  # Add chunk_size parameter here
         self.chunk_size = chunk_size
         self.hasher = FileHasher(chunk_size)  # Pass to FileHasher
         self.differ = FileDiffer()
