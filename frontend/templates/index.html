@@ -642,73 +642,64 @@
                 });
             }
         
-            function renderSyncOperations(data) {
-                operations.innerHTML = '';
-        
-                if (!data.sync_plan || !data.sync_plan.operations.length) {
-                    operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
-                    return;
-                }
-        
-                const header = document.createElement('div');
-                header.className = 'operation-header';
-                header.innerHTML = `
-                    <div><strong>Operation</strong></div>
-                    <div><strong>Details</strong></div>
-                    <div><strong>Size</strong></div>
-                `;
-                operations.appendChild(header);
-        
-                data.sync_plan.operations.forEach(op => {
-                    const opEl = document.createElement('div');
-                    opEl.className = 'operation';
-        
-                    let typeClass = '';
-                    let typeText = '';
-                    let details = '';
-                    let dataPreview = '';
-        
-                    if (op.type === 'ADD') {
-                        typeClass = 'type-add';
-                        typeText = 'ADD';
-                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-                        if (op.data) {
-                            try {
-                                const content = atob(op.data.replace('...', ''));
-                                dataPreview = `<div class="data-preview">${content}</div>`;
-                            } catch(e) {
-                                console.error('Data decoding failed:', e);
-                            }
-                        }
-                    } else if (op.type === 'REMOVE') {
-                        typeClass = 'type-remove';
-                        typeText = 'REMOVE';
-                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-                    } else if (op.type === 'MODIFY') {
-                        typeClass = 'type-modify';
-                        typeText = 'MODIFY';
-                        details = `Old: ${op.old_offset}, New: ${op.new_offset}, Size: ${op.size} bytes`;
-                        if (op.new_data) {
-                            try {
-                                const content = atob(op.new_data.replace('...', ''));
-                                dataPreview = `<div class="data-preview">${content}</div>`;
-                            } catch(e) {
-                                console.error('New data decoding failed:', e);
-                            }
-                        }
-                    }
-        
-                    opEl.innerHTML = `
-                        <div><span class="operation-type ${typeClass}">${typeText}</span></div>
-                        <div>${details}${dataPreview}</div>
-                        <div>${formatBytes(op.size)}</div>
-                    `;
-        
-                    operations.appendChild(opEl);
-                });
-            }
-        
-            function formatBytes(bytes) {
+function renderSyncOperations(data) {
+    operations.innerHTML = '';
+
+    const changes = data.sync_plan.changes || [];
+    if (changes.length === 0) {
+        operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
+        return;
+    }
+
+    const header = document.createElement('div');
+    header.className = 'operation-header';
+    header.innerHTML = `
+        <div><strong>Operation</strong></div>
+        <div><strong>Details</strong></div>
+        <div><strong>Size</strong></div>
+    `;
+    operations.appendChild(header);
+
+    changes.forEach(op => {
+        const opEl = document.createElement('div');
+        opEl.className = 'operation';
+
+        let typeClass = '', typeText = '', details = '', dataPreview = '';
+
+        if (op.type === 'ADD') {
+            typeClass = 'type-add';  typeText = 'ADD';
+            details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+            dataPreview = `<div class="data-preview">${atob(op.data)}</div>`;
+        }
+        else if (op.type === 'MODIFY') {
+            typeClass = 'type-modify';  typeText = 'MODIFY';
+            details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+            dataPreview = `<div class="data-preview">${atob(op.data)}</div>`;
+        }
+        else if (op.type === 'REMOVE') {
+            typeClass = 'type-remove';  typeText = 'REMOVE';
+            details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+        }
+
+        opEl.innerHTML = `
+            <div><span class="operation-type ${typeClass}">${typeText}</span></div>
+            <div>${details}${dataPreview}</div>
+            <div>${formatBytes(op.size)}</div>
+        `;
+        operations.appendChild(opEl);
+    });
+
+    // efficiency info
+    const info = document.createElement('div');
+    info.className = 'efficiency-info';
+    info.innerHTML = `
+        <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
+        <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong></p>
+    `;
+    operations.appendChild(info);
+}
+
+function formatBytes(bytes) {
                 if (bytes === 0) return '0 Bytes';
                 const k = 1024;
                 const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];

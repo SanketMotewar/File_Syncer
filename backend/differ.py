@@ -82,8 +82,8 @@ class FileDiffer:
         # Calculate percentages
         total_chunks = max(len(old_chunks), len(new_chunks))  # Use max of both files
         changed = (result["stats"]["added"] + 
-                result["stats"]["removed"] + 
-                result["stats"]["modified"])
+                    result["stats"]["removed"] + 
+                    result["stats"]["modified"])
         result["stats"]["changed_percent"] = min(
             (changed / total_chunks) * 100 if total_chunks else 0,
             100.0

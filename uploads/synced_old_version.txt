@@ -1,6 +1,5 @@
 Hello, this is the first version of the file.
-It contains some nformation.
-Pleth extra care.
-ading.
-Have a gtant informationandle it with care.
+It contains some very important information.
+Please handle it with extra care.
 Thank you for reading.
+Have a great day!

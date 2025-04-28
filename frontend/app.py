@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 
+
 logging.basicConfig(level=logging.DEBUG)
 sys.path.append(str(Path(__file__).parent.parent))
 from backend.syncer import FileSyncer
@@ -24,27 +25,46 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.secret_key = 'your-secret-key'
 Path(app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
 
-def apply_sync_plan(old_file_path, sync_plan, output_file_path):
-    """Apply the sync plan to create a synchronized file"""
-    with open(old_file_path, 'rb') as f:
-        old_data = f.read()
-
+def apply_sync_plan(old_file_path: str, sync_plan: dict, output_file_path: str):
+    """
+    Rebuilds the new file exactly according to sync_plan['operations'].
+    
+    sync_plan format:
+      {
+        "operations": [
+           {"type":"UNCHANGED","offset":int,"size":int},
+           {"type":"ADD",      "offset":int,"size":int,"data":base64str},
+           {"type":"MODIFY",   "offset":int,"size":int,"data":base64str},
+           {"type":"REMOVE",   "offset":int,"size":int},
+           ...
+        ],
+        ...
+      }
+    """
+    # Load entire old file
+    old_data = Path(old_file_path).read_bytes()
     new_data = bytearray()
-    for operation in sync_plan:
-        op_type = operation['operation']
-        offset = operation['offset']
-        size = operation['size']
 
-        if op_type == 'ADD':
-            chunk_data = base64.b64decode(operation['data'])
-            new_data.extend(chunk_data)
-        elif op_type == 'REMOVE':
+    for op in sync_plan.get("operations", []):
+        t = op["type"]
+        if t == "UNCHANGED":
+            # Copy chunk from old
+            off, sz = op["offset"], op["size"]
+            new_data.extend(old_data[off : off + sz])
+
+        elif t in ("ADD", "MODIFY"):
+            # Decode and append new/modified bytes
+            new_data.extend(base64.b64decode(op["data"]))
+
+        elif t == "REMOVE":
+            # Skip these bytes entirely
             continue
-        elif op_type == 'UNCHANGED':
-            new_data.extend(old_data[offset:offset + size])
 
-    with open(output_file_path, 'wb') as f:
-        f.write(new_data)
+        else:
+            raise ValueError(f"Unknown operation type: {t}")
+
+    # Write the reconstructed file
+    Path(output_file_path).write_bytes(new_data)
 
 def determine_chunk_size(file_size: int) -> int:
     if file_size < 512:
@@ -104,13 +124,15 @@ def compare_files():
 
         start = time.time()
         res = syncer.analyze_files(str(old_path), str(new_path))
-        if not res.get("success",False):
-            return jsonify(status="error", message=res.get("error","Analysis failed")), 400
+        if not res.get("success", False):
+            return jsonify(status="error", message=res.get("error", "Analysis failed")), 400
 
+        # Now call generate_sync_plan here to get the sync operations
         plan = syncer.generate_sync_plan(res)
-        viz  = prepare_visualization(res["data"])
 
-        # write analysis file
+        viz = prepare_visualization(res["data"])
+
+        # Write analysis file (optional)
         try:
             txt = generate_human_readable_analysis(old_fn, new_fn, res["data"], plan)
             ts = int(time.time())
@@ -135,74 +157,93 @@ def compare_files():
     except Exception:
         logging.exception("Error in /compare")
         return jsonify(status="error", message="Internal server error"), 500
+    
+def extract_chunks(self, file_path: str) -> list:
+        """
+        Extract chunks from the given file. Each chunk is a dictionary containing:
+        - offset: the starting position of the chunk in the file
+        - size: the size of the chunk
+        - hash: a unique hash representing the content of the chunk
+        - data: the chunk's actual data (for ADD operations)
+        """
+        chunks = []
+        with open(file_path, 'rb') as file:
+            offset = 0
+            while chunk := file.read(self.chunk_size):
+                # Generate hash for this chunk
+                chunk_hash = hashlib.sha256(chunk).hexdigest()
+                chunks.append({
+                    "offset": offset,
+                    "size": len(chunk),
+                    "hash": chunk_hash,
+                    "data": chunk  # Optional: store data if needed for "ADD" operations
+                })
+                offset += len(chunk)
+        
+        return chunks
 
 # 🔥 Helper function to generate human-readable analysis
 def generate_human_readable_analysis(old_fn, new_fn, diff_data, sync_plan):
     """
-    Build a text report that never crashes even if some keys are missing.
-    Uses op['new_data'] for MODIFY and op['data'] for ADD.
+    Produce a short, well-ordered text report.
+    Assumes diff_data contains 'summary', 'details', 'old_chunks', 'new_chunks'.
     """
     out = []
     out.append(f"Old File: {old_fn}")
     out.append(f"New File: {new_fn}")
-    out.append("="*50)
+    out.append("=" * 50)
 
-    # summary
-    sumry = diff_data.get("summary",{})
+    # --- Summary ---
+    s = diff_data["summary"]
     out.append("\n=== Summary ===")
-    out.append(f"Total   : {sumry.get('total_chunks',0)}")
-    out.append(f"Unchanged: {sumry.get('unchanged',0)}")
-    out.append(f"Added   : {sumry.get('added',0)} ({sumry.get('bytes_added',0)} bytes)")
-    out.append(f"Removed : {sumry.get('removed',0)} ({sumry.get('bytes_removed',0)} bytes)")
-    out.append(f"Modified: {sumry.get('modified',0)}")
-    out.append(f"Change% : {sumry.get('changed_percent',0):.1f}%")
+    out.append(f"Total Chunks : {s['total_chunks']}")
+    out.append(f"Unchanged    : {s['unchanged']}")
+    out.append(f"Added        : {s['added']} ({s['bytes_added']} bytes)")
+    out.append(f"Removed      : {s['removed']} ({s['bytes_removed']} bytes)")
+    out.append(f"Modified     : {s['modified']}")
+    out.append(f"Change%      : {s['changed_percent']:.1f}%")
 
-    # old chunks
-    out.append("\n=== Old File Chunks (kept or removed) ===")
-    for c in diff_data.get("details",{}).get("removed_chunks",[])+diff_data.get("details",{}).get("unchanged_chunks",[]):
-        content = ""
+    # --- Old File Chunks (all, in order) ---
+    out.append("\n=== Old File Chunks ===")
+    for c in sorted(diff_data["old_chunks"], key=lambda x: x["index"]):
+        data = ""
         try:
-            content = base64.b64decode(c.get("data","")).decode("utf-8",errors="replace")
+            data = base64.b64decode(c["data"]).decode("utf-8", errors="replace").strip()
         except:
             pass
-        out.append(f"Chunk {c['index']}: Offset {c['offset']} Size {c['size']}")
-        out.append("  " + content.replace("\n","\n  "))
+        snippet = data.replace("\n"," ")[:40]
+        out.append(f"Chunk {c['index']}: {snippet}")
 
-    # new chunks
-    out.append("\n=== New File Chunks (added or kept) ===")
-    for c in diff_data.get("details",{}).get("added_chunks",[])+diff_data.get("details",{}).get("unchanged_chunks",[]):
-        content = ""
+    # --- New File Chunks (all, in order) ---
+    out.append("\n=== New File Chunks ===")
+    for c in sorted(diff_data["new_chunks"], key=lambda x: x["index"]):
+        data = ""
         try:
-            content = base64.b64decode(c.get("data","")).decode("utf-8",errors="replace")
+            data = base64.b64decode(c["data"]).decode("utf-8", errors="replace").strip()
         except:
             pass
-        out.append(f"Chunk {c['index']}: Offset {c['offset']} Size {c['size']}")
-        out.append("  " + content.replace("\n","\n  "))
+        snippet = data.replace("\n"," ")[:40]
+        out.append(f"Chunk {c['index']}: {snippet}")
 
-    # sync plan
+    # --- Sync Plan ---
+    ops = sync_plan["operations"]
     out.append("\n=== Synchronization Plan ===")
-    out.append(f"Total Operations: {len(sync_plan.get('operations',[]))}")
-    out.append(f"Total Bytes: {sync_plan.get('total_bytes',0)}")
-    out.append(f"Efficiency: {sync_plan.get('efficiency',0)}%")
-    for i,op in enumerate(sync_plan.get("operations",[]),1):
-        out.append(f"\nOperation {i}: {op.get('type','?')}")
-        out.append(f"  Offset: {op.get('offset','?')}  Size: {op.get('size','?')}")
-        if op.get("type")=="ADD":
-            data_b64 = op.get("data","")
+    out.append(f"Total Ops : {len(ops)}")
+    out.append(f"Efficiency : {sync_plan['efficiency']:.1f}%")
+
+    for i, op in enumerate(ops, 1):
+        t = op["type"]
+        off = op["offset"]
+        sz  = op["size"]
+        out.append(f"\n{i}. {t:<9} @offset {off:<4} size {sz}")
+        if t in ("ADD", "MODIFY"):
+            key = "data" if t=="ADD" else "new_data"
             try:
-                txt = base64.b64decode(data_b64).decode("utf-8",errors="replace")
-                out.append("  Added Content:\n    " + txt.replace("\n","\n    "))
+                txt = base64.b64decode(op.get(key,"")).decode("utf-8", errors="replace").strip()
+                snippet = txt.replace("\n"," ")[:50]
+                out.append(f"    → Snippet: {snippet}")
             except:
                 pass
-        if op.get("type")=="MODIFY":
-            nd = op.get("new_data","")
-            try:
-                txt = base64.b64decode(nd).decode("utf-8",errors="replace")
-                out.append("  New Content:\n    " + txt.replace("\n","\n    "))
-            except:
-                pass
-        if op.get("type")=="REMOVE":
-            out.append("  Action: Remove bytes")
 
     return "\n".join(out)
 
@@ -214,34 +255,21 @@ def serve_analysis_file(filename):
 def synchronize_files():
     try:
         data = request.get_json(force=True)
-        ops = data.get("operations",[])
+        ops = data.get("operations", [])
         old_fn = data.get("old_file")
         if not old_fn or not ops:
-            return jsonify(status="error", message="Missing data"),400
+            return jsonify(status="error", message="Missing data"), 400
 
         UP = Path(app.config['UPLOAD_FOLDER'])
-        old_path = UP/old_fn
+        old_path = UP / old_fn
         if not old_path.exists():
-            return jsonify(status="error", message="Old file not found"),404
+            return jsonify(status="error", message="Old file not found"), 404
 
-        dst = UP/f"synced_{old_fn}"
-        shutil.copyfile(old_path, dst)
-        logging.debug(f"Copied to {dst}")
+        dst = UP / f"synced_{old_fn}"
 
-        content = bytearray(dst.read_bytes())
-        for op in ops:
-            t = op.get("type")
-            off = op.get("offset",0)
-            sz  = op.get("size",0)
-            if t=="ADD":
-                d = base64.b64decode(op.get("data",""))
-                content[off:off] = d
-            elif t=="REMOVE":
-                del content[off:off+sz]
-            elif t=="MODIFY":
-                nd = base64.b64decode(op.get("new_data",""))
-                content[off:off+sz] = nd
-        dst.write_bytes(content)
+        # Instead of inplace modification, REBUILD using apply_sync_plan
+        sync_plan = {"operations": ops}
+        apply_sync_plan(str(old_path), sync_plan, str(dst))
 
         return jsonify(status="success", message="Synchronized", output_file=dst.name)
 
