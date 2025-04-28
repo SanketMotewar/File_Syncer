@@ -156,3 +156,4 @@ class FileSyncer:
     def _estimate_sync_time(self, bytes_to_sync: int) -> float:
         # assuming 10MB/s
         return round(bytes_to_sync / (10 * 1024 * 1024), 2)
+    

@@ -1,0 +1,67 @@
+Old File: old_version.txt
+New File: new_version.txt
+==================================================
+=== Summary ===
+Total Chunks : 0
+Unchanged    : 4
+Added        : 7 (107 bytes)
+Removed      : 5 (75 bytes)
+Modified     : 0
+Change%      : 100.0%
+
+=== Old File Chunks ===
+Chunk 1: Hello, this is t
+Chunk 2: he first version
+Chunk 3: of the file.↵I
+Chunk 4: t contains some
+Chunk 5: important inform
+Chunk 6: ation.↵Please h
+Chunk 7: andle it with ca
+Chunk 8: re.↵Thank you f
+Chunk 9: or reading.
+
+=== New File Chunks ===
+Chunk 1: Hello, this is t
+Chunk 2: he first version
+Chunk 3: of the file.↵I
+Chunk 4: t contains some
+Chunk 5: very important i
+Chunk 6: nformation.↵Ple
+Chunk 7: ase handle it wi
+Chunk 8: th extra care.↵
+Chunk 9: Thank you for re
+Chunk 10: ading.↵Have a g
+Chunk 11: reat day!↵
+
+=== Synchronization Plan ===
+Total Ops : 11
+Efficiency : 100.0%
+
+1. UNCHANGED @offset 0   size 16
+
+2. UNCHANGED @offset 16  size 16
+
+3. UNCHANGED @offset 32  size 16
+
+4. UNCHANGED @offset 48  size 16
+
+5. ADD     @offset 64  size 16
+    → very important i
+
+6. ADD     @offset 80  size 16
+    → nformation.
+
+7. ADD     @offset 96  size 16
+    → ase handle it wi
+
+8. ADD     @offset 112 size 16
+    → th extra care.
+
+9. ADD     @offset 128 size 16
+    → Thank you for re
+
+10. ADD     @offset 144 size 16
+    → ading.
+
+11. ADD     @offset 160 size 11
+    → reat day!

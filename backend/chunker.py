@@ -38,18 +38,28 @@ class FileChunker:
         return chunks
 
     def _find_boundary(self, data: bytes, start: int, end: int) -> int:
-        """Find chunk boundary using rolling hash"""
+        """Find a rolling-hash boundary, then snap forward to the next newline if possible."""
         if end - start <= self.window_size:
             return end
 
-        window = data[start:start+self.window_size]
+        # initial hash
+        window = data[start:start + self.window_size]
         hash_val = self._rolling_hash(window)
-        
+
         for i in range(start + self.window_size, end):
             if (hash_val % self.avg_chunk_size) == (self.avg_chunk_size - 1):
-                return i
-            hash_val = self._update_rolling_hash(hash_val, data[i], data[i-self.window_size])
-        
+                # we found a “raw” boundary at i — now try to include through the next '\n'
+                scan_end = min(end, i + self.window_size)
+                nl = data.find(b'\n', i, scan_end)
+                return (nl + 1) if nl != -1 else i
+
+            # update rolling hash
+            hash_val = self._update_rolling_hash(
+                hash_val,
+                data[i],
+                data[i - self.window_size]
+            )
+
         return end
 
     def _rolling_hash(self, data: bytes) -> int:

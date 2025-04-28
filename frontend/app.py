@@ -4,6 +4,7 @@ import time
 import base64
 import shutil
 import logging
+import textwrap
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -129,14 +130,16 @@ def compare_files():
 
         # Now call generate_sync_plan here to get the sync operations
         plan = syncer.generate_sync_plan(res)
+        viz  = prepare_visualization(res["data"])
 
-        viz = prepare_visualization(res["data"])
-
-        # Write analysis file (optional)
+        # write analysis file
         try:
-            txt = generate_human_readable_analysis(old_fn, new_fn, res["data"], plan)
-            ts = int(time.time())
-            af = UP/f"analysis_{ts}.txt"
+            txt = generate_human_readable_analysis(
+                old_fn, new_fn,
+                res["data"],     # <-- diff_data
+                plan
+            )
+            af = UP / f"analysis_{int(time.time())}.txt"
             af.write_text(txt, encoding="utf-8")
             analysis_file = af.name
         except Exception:
@@ -144,14 +147,12 @@ def compare_files():
             analysis_file = None
 
         return jsonify({
-            "status": "success",
-            "diff_report": res["data"],
-            "sync_plan": plan,
-            "visualization": viz,
-            "analysis_time": time.time() - start,
-            "old_filename": old_fn,
-            "new_filename": new_fn,
-            "analysis_file": analysis_file
+            "status":       "success",
+            "diff_report":  res["data"],
+            "sync_plan":    plan,
+            "visualization":viz,
+            "analysis_file":analysis_file,
+            # …
         })
 
     except Exception:
@@ -185,67 +186,77 @@ def extract_chunks(self, file_path: str) -> list:
 # 🔥 Helper function to generate human-readable analysis
 def generate_human_readable_analysis(old_fn, new_fn, diff_data, sync_plan):
     """
-    Produce a short, well-ordered text report.
-    Assumes diff_data contains 'summary', 'details', 'old_chunks', 'new_chunks'.
+    A concise analysis report.
+    - Lists old/new chunks (in index order).
+    - References them from diff_data['old_chunks'] / ['new_chunks'].
+    - Shows each operation in the sync_plan.
     """
-    out = []
-    out.append(f"Old File: {old_fn}")
-    out.append(f"New File: {new_fn}")
-    out.append("=" * 50)
+    lines = []
+    lines.append(f"Old File: {old_fn}")
+    lines.append(f"New File: {new_fn}")
+    lines.append("=" * 50)
 
-    # --- Summary ---
+    # Summary
     s = diff_data["summary"]
-    out.append("\n=== Summary ===")
-    out.append(f"Total Chunks : {s['total_chunks']}")
-    out.append(f"Unchanged    : {s['unchanged']}")
-    out.append(f"Added        : {s['added']} ({s['bytes_added']} bytes)")
-    out.append(f"Removed      : {s['removed']} ({s['bytes_removed']} bytes)")
-    out.append(f"Modified     : {s['modified']}")
-    out.append(f"Change%      : {s['changed_percent']:.1f}%")
+    lines.append("=== Summary ===")
+    lines.append(f"Total Chunks : {s['total_chunks']}")
+    lines.append(f"Unchanged    : {s['unchanged']}")
+    lines.append(f"Added        : {s['added']} ({s['bytes_added']} bytes)")
+    lines.append(f"Removed      : {s['removed']} ({s['bytes_removed']} bytes)")
+    lines.append(f"Modified     : {s['modified']}")
+    lines.append(f"Change%      : {s['changed_percent']:.1f}%")
+    lines.append("")
 
-    # --- Old File Chunks (all, in order) ---
-    out.append("\n=== Old File Chunks ===")
-    for c in sorted(diff_data["old_chunks"], key=lambda x: x["index"]):
-        data = ""
-        try:
-            data = base64.b64decode(c["data"]).decode("utf-8", errors="replace").strip()
-        except:
-            pass
-        snippet = data.replace("\n"," ")[:40]
-        out.append(f"Chunk {c['index']}: {snippet}")
+    def fmt_chunks(chunks, title):
+        lines.append(f"=== {title} ===")
+        for c in sorted(chunks, key=lambda c: c["index"]):
+            # decode once
+            raw = base64.b64decode(c["data"])
+            txt = raw.decode("utf-8", errors="replace")
+            # show embedded newlines as ↵, strip
+            single = txt.replace("\r\n", "\n").replace("\n", "↵").strip()
+            lines.append(f"Chunk {c['index'] + 1}: {single}")
+        lines.append("")
 
-    # --- New File Chunks (all, in order) ---
-    out.append("\n=== New File Chunks ===")
-    for c in sorted(diff_data["new_chunks"], key=lambda x: x["index"]):
-        data = ""
-        try:
-            data = base64.b64decode(c["data"]).decode("utf-8", errors="replace").strip()
-        except:
-            pass
-        snippet = data.replace("\n"," ")[:40]
-        out.append(f"Chunk {c['index']}: {snippet}")
+    # **Use top‐level** old_chunks / new_chunks, not diff_data["details"]
+    fmt_chunks(diff_data.get("old_chunks", []), "Old File Chunks")
+    fmt_chunks(diff_data.get("new_chunks", []), "New File Chunks")
 
-    # --- Sync Plan ---
-    ops = sync_plan["operations"]
-    out.append("\n=== Synchronization Plan ===")
-    out.append(f"Total Ops : {len(ops)}")
-    out.append(f"Efficiency : {sync_plan['efficiency']:.1f}%")
+    # Sync Plan
+    lines.append("=== Synchronization Plan ===")
+    lines.append(f"Total Ops : {len(sync_plan['operations'])}")
+    lines.append(f"Efficiency : {sync_plan['efficiency']:.1f}%")
+    lines.append("")
 
-    for i, op in enumerate(ops, 1):
-        t = op["type"]
+    for i, op in enumerate(sync_plan["operations"], 1):
+        t   = op["type"]
         off = op["offset"]
         sz  = op["size"]
-        out.append(f"\n{i}. {t:<9} @offset {off:<4} size {sz}")
-        if t in ("ADD", "MODIFY"):
-            key = "data" if t=="ADD" else "new_data"
+
+        if t == "UNCHANGED":
+            lines.append(f"{i}. UNCHANGED @offset {off:<3} size {sz}")
+        elif t == "REMOVE":
+            lines.append(f"{i}. REMOVE    @offset {off:<3} size {sz}")
+        else:  # ADD or MODIFY
+            label = "ADD" if t == "ADD" else "MODIFY"
+            # try to grab a one‐line snippet
+            snippet = ""
+            b64     = op.get("data") or op.get("new_data", "")
             try:
-                txt = base64.b64decode(op.get(key,"")).decode("utf-8", errors="replace").strip()
-                snippet = txt.replace("\n"," ")[:50]
-                out.append(f"    → Snippet: {snippet}")
+                raw = base64.b64decode(b64)
+                txt = raw.decode("utf-8", errors="replace").splitlines()[0].strip()
+                snippet = txt
             except:
                 pass
 
-    return "\n".join(out)
+            lines.append(f"{i}. {label:8}@offset {off:<3} size {sz}")
+            if snippet:
+                wrapped = textwrap.fill(snippet, width=60)
+                for ln in wrapped.splitlines():
+                    lines.append(f"    → {ln}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 @app.route('/analysis/<filename>')
 def serve_analysis_file(filename):
@@ -255,28 +266,72 @@ def serve_analysis_file(filename):
 def synchronize_files():
     try:
         data = request.get_json(force=True)
-        ops = data.get("operations", [])
-        old_fn = data.get("old_file")
-        if not old_fn or not ops:
-            return jsonify(status="error", message="Missing data"), 400
+        old_fn = data.get("old_file") or data.get("old_filename")
+        ops    = data.get("operations")
 
-        UP = Path(app.config['UPLOAD_FOLDER'])
+        # Key must exist (even an empty list is OK)
+        if old_fn is None:
+            return jsonify(status="error", message="Missing 'old_file'"), 400
+        if ops is None:
+            return jsonify(status="error", message="Missing 'operations'"), 400
+
+        UP       = Path(app.config['UPLOAD_FOLDER'])
         old_path = UP / old_fn
         if not old_path.exists():
             return jsonify(status="error", message="Old file not found"), 404
 
-        dst = UP / f"synced_{old_fn}"
+        # Read entire old file once
+        old_data = old_path.read_bytes()
+        new_data = bytearray()
 
-        # Instead of inplace modification, REBUILD using apply_sync_plan
-        sync_plan = {"operations": ops}
-        apply_sync_plan(str(old_path), sync_plan, str(dst))
+        # Sort operations by offset to assemble in order
+        for op in sorted(ops, key=lambda o: o.get("offset", 0)):
+            t   = (op.get("type") or "").upper()
+            off = int(op.get("offset", 0))
+            sz  = int(op.get("size",    0))
 
-        return jsonify(status="success", message="Synchronized", output_file=dst.name)
+            if t == "UNCHANGED":
+                # copy a slice from the old file
+                new_data.extend(old_data[off:off+sz])
 
-    except Exception:
+            elif t == "ADD":
+                # append the new bytes
+                b64 = op.get("data", "")
+                try:
+                    new_data.extend(base64.b64decode(b64))
+                except:
+                    logging.warning("Bad base64 in ADD op at offset %s", off)
+
+            elif t == "MODIFY":
+                # replace old slice with new bytes
+                b64 = op.get("new_data", op.get("data", ""))
+                try:
+                    new_data.extend(base64.b64decode(b64))
+                except:
+                    logging.warning("Bad base64 in MODIFY op at offset %s", off)
+
+            elif t == "REMOVE":
+                # skip this slice (do nothing)
+                continue
+
+            else:
+                # unknown op → skip safely
+                logging.warning("Skipping unknown op %r", op)
+
+        # Write out the reconstructed file
+        synced_path = UP / f"synced_{old_fn}"
+        synced_path.write_bytes(new_data)
+
+        return jsonify(
+            status="success",
+            message="Files synchronized successfully",
+            output_file=synced_path.name
+        )
+
+    except Exception as e:
         logging.exception("Error in /synchronize")
         return jsonify(status="error", message="Internal server error"), 500
-
+    
 @app.route('/uploads/<filename>')
 def serve_uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
