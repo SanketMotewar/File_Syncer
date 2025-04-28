@@ -81,15 +81,14 @@ class FileDiffer:
 
         # Calculate percentages
         total_chunks = max(len(old_chunks), len(new_chunks))  # Use max of both files
-        changed = (result["stats"]["added"] + 
-                    result["stats"]["removed"] + 
-                    result["stats"]["modified"])
+        changed = len(result["added_chunks"]) + len(result["removed_chunks"]) + len(result["modified_chunks"])
+        total_chunks = len(old_chunks) + len(result["added_chunks"])
+        result["stats"]["total_chunks"] = total_chunks  # Set total chunks here
         result["stats"]["changed_percent"] = min(
             (changed / total_chunks) * 100 if total_chunks else 0,
             100.0
         )
 
-        print(f"Change Analysis: {changed}/{total_chunks} chunks changed")
         return result
 
     @staticmethod

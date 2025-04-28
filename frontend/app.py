@@ -26,47 +26,6 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.secret_key = 'your-secret-key'
 Path(app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
 
-def apply_sync_plan(old_file_path: str, sync_plan: dict, output_file_path: str):
-    """
-    Rebuilds the new file exactly according to sync_plan['operations'].
-    
-    sync_plan format:
-      {
-        "operations": [
-           {"type":"UNCHANGED","offset":int,"size":int},
-           {"type":"ADD",      "offset":int,"size":int,"data":base64str},
-           {"type":"MODIFY",   "offset":int,"size":int,"data":base64str},
-           {"type":"REMOVE",   "offset":int,"size":int},
-           ...
-        ],
-        ...
-      }
-    """
-    # Load entire old file
-    old_data = Path(old_file_path).read_bytes()
-    new_data = bytearray()
-
-    for op in sync_plan.get("operations", []):
-        t = op["type"]
-        if t == "UNCHANGED":
-            # Copy chunk from old
-            off, sz = op["offset"], op["size"]
-            new_data.extend(old_data[off : off + sz])
-
-        elif t in ("ADD", "MODIFY"):
-            # Decode and append new/modified bytes
-            new_data.extend(base64.b64decode(op["data"]))
-
-        elif t == "REMOVE":
-            # Skip these bytes entirely
-            continue
-
-        else:
-            raise ValueError(f"Unknown operation type: {t}")
-
-    # Write the reconstructed file
-    Path(output_file_path).write_bytes(new_data)
-
 def determine_chunk_size(file_size: int) -> int:
     if file_size < 512:
         return 8
@@ -158,32 +117,7 @@ def compare_files():
     except Exception:
         logging.exception("Error in /compare")
         return jsonify(status="error", message="Internal server error"), 500
-    
-def extract_chunks(self, file_path: str) -> list:
-        """
-        Extract chunks from the given file. Each chunk is a dictionary containing:
-        - offset: the starting position of the chunk in the file
-        - size: the size of the chunk
-        - hash: a unique hash representing the content of the chunk
-        - data: the chunk's actual data (for ADD operations)
-        """
-        chunks = []
-        with open(file_path, 'rb') as file:
-            offset = 0
-            while chunk := file.read(self.chunk_size):
-                # Generate hash for this chunk
-                chunk_hash = hashlib.sha256(chunk).hexdigest()
-                chunks.append({
-                    "offset": offset,
-                    "size": len(chunk),
-                    "hash": chunk_hash,
-                    "data": chunk  # Optional: store data if needed for "ADD" operations
-                })
-                offset += len(chunk)
-        
-        return chunks
 
-# 🔥 Helper function to generate human-readable analysis
 def generate_human_readable_analysis(old_fn, new_fn, diff_data, sync_plan):
     """
     A concise analysis report.
@@ -258,80 +192,25 @@ def generate_human_readable_analysis(old_fn, new_fn, diff_data, sync_plan):
 
     return "\n".join(lines)
 
+@app.route("/synchronize", methods=["POST"])
+def synchronize():
+    sync_plan = request.get_json()
+
+    output_path = "uploads/synced_old_version.txt"  # Updated filename
+
+    content = bytearray()
+    for op in sync_plan["operations"]:
+        chunk = base64.b64decode(op["data"])
+        content.extend(chunk)
+
+    Path(output_path).write_bytes(content)
+
+    return jsonify({"success": True, "message": f"File written to {output_path}"})
+
 @app.route('/analysis/<filename>')
 def serve_analysis_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-@app.route('/synchronize', methods=['POST'])
-def synchronize_files():
-    try:
-        data = request.get_json(force=True)
-        old_fn = data.get("old_file") or data.get("old_filename")
-        ops    = data.get("operations")
-
-        # Key must exist (even an empty list is OK)
-        if old_fn is None:
-            return jsonify(status="error", message="Missing 'old_file'"), 400
-        if ops is None:
-            return jsonify(status="error", message="Missing 'operations'"), 400
-
-        UP       = Path(app.config['UPLOAD_FOLDER'])
-        old_path = UP / old_fn
-        if not old_path.exists():
-            return jsonify(status="error", message="Old file not found"), 404
-
-        # Read entire old file once
-        old_data = old_path.read_bytes()
-        new_data = bytearray()
-
-        # Sort operations by offset to assemble in order
-        for op in sorted(ops, key=lambda o: o.get("offset", 0)):
-            t   = (op.get("type") or "").upper()
-            off = int(op.get("offset", 0))
-            sz  = int(op.get("size",    0))
-
-            if t == "UNCHANGED":
-                # copy a slice from the old file
-                new_data.extend(old_data[off:off+sz])
-
-            elif t == "ADD":
-                # append the new bytes
-                b64 = op.get("data", "")
-                try:
-                    new_data.extend(base64.b64decode(b64))
-                except:
-                    logging.warning("Bad base64 in ADD op at offset %s", off)
-
-            elif t == "MODIFY":
-                # replace old slice with new bytes
-                b64 = op.get("new_data", op.get("data", ""))
-                try:
-                    new_data.extend(base64.b64decode(b64))
-                except:
-                    logging.warning("Bad base64 in MODIFY op at offset %s", off)
-
-            elif t == "REMOVE":
-                # skip this slice (do nothing)
-                continue
-
-            else:
-                # unknown op → skip safely
-                logging.warning("Skipping unknown op %r", op)
-
-        # Write out the reconstructed file
-        synced_path = UP / f"synced_{old_fn}"
-        synced_path.write_bytes(new_data)
-
-        return jsonify(
-            status="success",
-            message="Files synchronized successfully",
-            output_file=synced_path.name
-        )
-
-    except Exception as e:
-        logging.exception("Error in /synchronize")
-        return jsonify(status="error", message="Internal server error"), 500
-    
 @app.route('/uploads/<filename>')
 def serve_uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)

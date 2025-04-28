@@ -472,8 +472,7 @@
         
             let oldFile = null;
             let newFile = null;
-        
-            window.syncData = null; // global syncData object
+            window.syncData = null; // global object
         
             // Handle file selection
             oldFileInput.addEventListener('change', function(e) {
@@ -522,7 +521,7 @@
                     if (data.status !== 'success') throw new Error(data.message || 'Comparison failed');
         
                     window.syncData = {
-                        old_filename: data.old_filename,
+                        old_filename: data.old_filename, // very important - store filename returned from server (inside uploads folder)
                         new_filename: data.new_filename,
                         sync_plan: data.sync_plan.operations
                     };
@@ -551,7 +550,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        old_file: window.syncData.old_filename,
+                        old_file: window.syncData.old_filename, // send old file name from uploads folder
                         new_file: window.syncData.new_filename,
                         operations: window.syncData.sync_plan
                     })
@@ -566,9 +565,7 @@
                         alert(`Synchronization Successful: ${data.message}`);
                         window.syncData = null;
                         syncButton.disabled = true;
-                    } else {
-                        throw new Error(data.message || 'Unknown sync error');
-                    }
+                    } 
                 })
                 .catch(err => {
                     loading.style.display = 'none';
@@ -642,64 +639,63 @@
                 });
             }
         
-function renderSyncOperations(data) {
-    operations.innerHTML = '';
-
-    const changes = data.sync_plan.changes || [];
-    if (changes.length === 0) {
-        operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
-        return;
-    }
-
-    const header = document.createElement('div');
-    header.className = 'operation-header';
-    header.innerHTML = `
-        <div><strong>Operation</strong></div>
-        <div><strong>Details</strong></div>
-        <div><strong>Size</strong></div>
-    `;
-    operations.appendChild(header);
-
-    changes.forEach(op => {
-        const opEl = document.createElement('div');
-        opEl.className = 'operation';
-
-        let typeClass = '', typeText = '', details = '', dataPreview = '';
-
-        if (op.type === 'ADD') {
-            typeClass = 'type-add';  typeText = 'ADD';
-            details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-            dataPreview = `<div class="data-preview">${atob(op.data)}</div>`;
-        }
-        else if (op.type === 'MODIFY') {
-            typeClass = 'type-modify';  typeText = 'MODIFY';
-            details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-            dataPreview = `<div class="data-preview">${atob(op.data)}</div>`;
-        }
-        else if (op.type === 'REMOVE') {
-            typeClass = 'type-remove';  typeText = 'REMOVE';
-            details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-        }
-
-        opEl.innerHTML = `
-            <div><span class="operation-type ${typeClass}">${typeText}</span></div>
-            <div>${details}${dataPreview}</div>
-            <div>${formatBytes(op.size)}</div>
-        `;
-        operations.appendChild(opEl);
-    });
-
-    // efficiency info
-    const info = document.createElement('div');
-    info.className = 'efficiency-info';
-    info.innerHTML = `
-        <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
-        <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong></p>
-    `;
-    operations.appendChild(info);
-}
-
-function formatBytes(bytes) {
+            function renderSyncOperations(data) {
+                operations.innerHTML = '';
+        
+                const changes = data.sync_plan.changes || [];
+                if (changes.length === 0) {
+                    operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
+                    return;
+                }
+        
+                const header = document.createElement('div');
+                header.className = 'operation-header';
+                header.innerHTML = `
+                    <div><strong>Operation</strong></div>
+                    <div><strong>Details</strong></div>
+                    <div><strong>Size</strong></div>
+                `;
+                operations.appendChild(header);
+        
+                changes.forEach(op => {
+                    const opEl = document.createElement('div');
+                    opEl.className = 'operation';
+        
+                    let typeClass = '', typeText = '', details = '', dataPreview = '';
+        
+                    if (op.type === 'ADD') {
+                        typeClass = 'type-add'; typeText = 'ADD';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                        dataPreview = `<div class="data-preview">${atob(op.data)}</div>`;
+                    }
+                    else if (op.type === 'MODIFY') {
+                        typeClass = 'type-modify'; typeText = 'MODIFY';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                        dataPreview = `<div class="data-preview">${atob(op.data)}</div>`;
+                    }
+                    else if (op.type === 'REMOVE') {
+                        typeClass = 'type-remove'; typeText = 'REMOVE';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                    }
+        
+                    opEl.innerHTML = `
+                        <div><span class="operation-type ${typeClass}">${typeText}</span></div>
+                        <div>${details}${dataPreview}</div>
+                        <div>${formatBytes(op.size)}</div>
+                    `;
+                    operations.appendChild(opEl);
+                });
+        
+                const info = document.createElement('div');
+                info.className = 'efficiency-info';
+                info.innerHTML = `
+                    <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
+                    <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong></p>
+                `;
+                operations.appendChild(info);
+            }
+        
+            function formatBytes(bytes) {
                 if (bytes === 0) return '0 Bytes';
                 const k = 1024;
                 const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
