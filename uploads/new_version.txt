@@ -1,4 +1,5 @@
-This is the UPDATED file content.
-It now has four lines instead of three.
-This is line number three.
-And this is a brand new fourth line!
+Hello, this is the first version of the file.
+It contains some very important information.
+Please handle it with extra care.
+Thank you for reading.
+Have a great day!

@@ -9,28 +9,20 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 
 logging.basicConfig(level=logging.DEBUG)
-
-# Add parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
 from backend.syncer import FileSyncer
 
-# Initialize Flask app with correct paths
-from pathlib import Path
-
-# Get the base directory
+# Initialize Flask app
 BASE_DIR = Path(__file__).parent.parent
-
-# Initialize Flask app with absolute paths
-app = Flask(__name__,
-            template_folder=str(BASE_DIR / 'frontend' / 'templates'),
-            static_folder=str(BASE_DIR / 'frontend' / 'static'))# Configuration
-
+app = Flask(
+    __name__,
+    template_folder=str(BASE_DIR / 'frontend' / 'templates'),
+    static_folder=str(BASE_DIR / 'frontend' / 'static')
+)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
-app.secret_key = 'your-secret-key-here'
-
-# Ensure directories exist
-Path(app.config['UPLOAD_FOLDER']).mkdir(parents=True, exist_ok=True)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.secret_key = 'your-secret-key'
+Path(app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
 
 def apply_sync_plan(old_file_path, sync_plan, output_file_path):
     """Apply the sync plan to create a synchronized file"""
@@ -44,87 +36,44 @@ def apply_sync_plan(old_file_path, sync_plan, output_file_path):
         size = operation['size']
 
         if op_type == 'ADD':
-            # Decode base64 data and add
-            import base64
             chunk_data = base64.b64decode(operation['data'])
             new_data.extend(chunk_data)
         elif op_type == 'REMOVE':
-            # Skip removed parts (do not add to new_data)
             continue
         elif op_type == 'UNCHANGED':
-            # Copy unchanged part from old file
             new_data.extend(old_data[offset:offset + size])
 
-    with open(new_file_path, 'rb') as src, open(output_file_path, 'wb') as dest:
-            dest.write(src.read())
+    with open(output_file_path, 'wb') as f:
+        f.write(new_data)
 
 def determine_chunk_size(file_size: int) -> int:
-    """Determine optimal chunk size based on file size"""
-    if file_size < 512:  # New threshold for small text files
-        return 16
-    elif file_size < 1024 * 1024:  # < 1MB
-        return 1024
-    elif file_size < 10 * 1024 * 1024:  # < 10MB
+    if file_size < 512:
+        return 8
+    if file_size < 1024 * 1024:
+        return 512
+    if file_size < 10 * 1024 * 1024:
         return 4096
-    return 8192  # For files >= 10MB
+    return 8192
 
 def prepare_visualization(diff_report: dict) -> list:
-    """Prepare data for visual chunk comparison"""
-    visualization = []
-    
-    colors = {
-        "added": "#4CAF50",
-        "removed": "#F44336",
-        "unchanged": "#9E9E9E",
-        "modified": "#FFC107"  # Added modified color
-    }
-
-    # Process modified chunks first for visual priority
-    for mod in diff_report.get("details", {}).get("modified_chunks", []):
-        new_chunk = mod.get("new_chunk", {})
-        visualization.append({
-            "index": new_chunk.get("index", 0),
-            "type": "modified",
-            "size": new_chunk.get("size", 0),
-            "color": colors["modified"],
-            "old_offset": mod.get("old_chunk", {}).get("offset", 0),  # Additional context
-            "new_offset": new_chunk.get("offset", 0)
-        })
-
-    # Process added chunks
-    for chunk in diff_report.get("details", {}).get("added_chunks", []):
-        visualization.append({
-            "index": chunk.get("index", 0),
-            "type": "added",
-            "size": chunk.get("size", 0),
-            "color": colors["added"],
-            "offset": chunk.get("offset", 0)
-        })
-
-    # Process removed chunks (reference old indexes)
-    for chunk in diff_report.get("details", {}).get("removed_chunks", []):
-        visualization.append({
-            "index": chunk.get("index", 0),
-            "type": "removed",
-            "size": chunk.get("size", 0),
-            "color": colors["removed"],
-            "offset": chunk.get("offset", 0)
-        })
-
-    # Process unchanged chunks last
-    for chunk in diff_report.get("details", {}).get("unchanged_chunks", []):
-        visualization.append({
-            "index": chunk.get("index", 0),
-            "type": "unchanged",
-            "size": chunk.get("size", 0),
-            "color": colors["unchanged"],
-            "offset": chunk.get("offset", 0)
-        })
-
-    # Sort by chunk index in new file
-    visualization.sort(key=lambda x: x["index"])
-    
-    return visualization
+    colors = {"added":"#4CAF50","removed":"#F44336","unchanged":"#9E9E9E","modified":"#FFC107"}
+    viz = []
+    for m in diff_report.get("details",{}).get("modified_chunks",[]):
+        nc=m["new_chunk"]
+        viz.append({ "index":nc["index"],"type":"modified","size":nc["size"],
+                     "color":colors["modified"],"old_offset":m["old_chunk"]["offset"],
+                     "new_offset":nc["offset"] })
+    for c in diff_report.get("details",{}).get("added_chunks",[]):
+        viz.append({ "index":c["index"],"type":"added","size":c["size"],
+                     "color":colors["added"],"offset":c["offset"] })
+    for c in diff_report.get("details",{}).get("removed_chunks",[]):
+        viz.append({ "index":c["index"],"type":"removed","size":c["size"],
+                     "color":colors["removed"],"offset":c["offset"] })
+    for c in diff_report.get("details",{}).get("unchanged_chunks",[]):
+        viz.append({ "index":c["index"],"type":"unchanged","size":c["size"],
+                     "color":colors["unchanged"],"offset":c["offset"] })
+    viz.sort(key=lambda x: x["index"])
+    return viz
 
 @app.route('/')
 def home():
@@ -134,120 +83,175 @@ def home():
 def compare_files():
     try:
         if 'old_file' not in request.files or 'new_file' not in request.files:
-            return jsonify({"status": "error", "message": "Both files are required"}), 400
+            return jsonify(status="error", message="Both files required"), 400
 
-        old_file = request.files['old_file']
-        new_file = request.files['new_file']
+        old_f = request.files['old_file']
+        new_f = request.files['new_file']
+        if not old_f.filename or not new_f.filename:
+            return jsonify(status="error", message="No files selected"), 400
 
-        if not old_file.filename or not new_file.filename:
-            return jsonify({"status": "error", "message": "No files selected"}), 400
+        old_fn = secure_filename(old_f.filename)
+        new_fn = secure_filename(new_f.filename)
+        UP = Path(app.config['UPLOAD_FOLDER'])
+        old_path = UP/old_fn
+        new_path = UP/new_fn
+        old_f.save(str(old_path))
+        new_f.save(str(new_path))
 
-        # Secure filenames and save files
-        old_filename = secure_filename(old_file.filename)
-        new_filename = secure_filename(new_file.filename)
-        upload_dir = Path(app.config['UPLOAD_FOLDER'])
-        
-        old_path = upload_dir / old_filename
-        new_path = upload_dir / new_filename
-        
-        old_file.save(str(old_path))
-        new_file.save(str(new_path))
+        size = max(old_path.stat().st_size, new_path.stat().st_size)
+        cs = determine_chunk_size(size)
+        syncer = FileSyncer(chunk_size=cs)
 
-        # Determine chunk size
-        file_size = max(old_path.stat().st_size, new_path.stat().st_size)
-        chunk_size = determine_chunk_size(file_size)
-        
-        # Analyze files
-        syncer = FileSyncer(chunk_size=chunk_size)
-        start_time = time.time()
-        analysis = syncer.analyze_files(str(old_path), str(new_path))
+        start = time.time()
+        res = syncer.analyze_files(str(old_path), str(new_path))
+        if not res.get("success",False):
+            return jsonify(status="error", message=res.get("error","Analysis failed")), 400
 
-        if not analysis.get('success', False):
-            return jsonify({"status": "error", "message": analysis.get('error', 'Unknown error')}), 400
+        plan = syncer.generate_sync_plan(res)
+        viz  = prepare_visualization(res["data"])
 
-        # Prepare response
-        sync_plan = syncer.generate_sync_plan(analysis)
-        visualization = prepare_visualization(analysis.get('data', {}))
+        # write analysis file
+        try:
+            txt = generate_human_readable_analysis(old_fn, new_fn, res["data"], plan)
+            ts = int(time.time())
+            af = UP/f"analysis_{ts}.txt"
+            af.write_text(txt, encoding="utf-8")
+            analysis_file = af.name
+        except Exception:
+            logging.exception("Failed to write analysis file")
+            analysis_file = None
 
         return jsonify({
             "status": "success",
-            "diff_report": analysis.get('data', {}),
-            "sync_plan": sync_plan,
-            "visualization": visualization,
-            "analysis_time": time.time() - start_time,
-            "old_filename": old_filename,
-            "new_filename": new_filename
+            "diff_report": res["data"],
+            "sync_plan": plan,
+            "visualization": viz,
+            "analysis_time": time.time() - start,
+            "old_filename": old_fn,
+            "new_filename": new_fn,
+            "analysis_file": analysis_file
         })
 
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception:
+        logging.exception("Error in /compare")
+        return jsonify(status="error", message="Internal server error"), 500
+
+# 🔥 Helper function to generate human-readable analysis
+def generate_human_readable_analysis(old_fn, new_fn, diff_data, sync_plan):
+    """
+    Build a text report that never crashes even if some keys are missing.
+    Uses op['new_data'] for MODIFY and op['data'] for ADD.
+    """
+    out = []
+    out.append(f"Old File: {old_fn}")
+    out.append(f"New File: {new_fn}")
+    out.append("="*50)
+
+    # summary
+    sumry = diff_data.get("summary",{})
+    out.append("\n=== Summary ===")
+    out.append(f"Total   : {sumry.get('total_chunks',0)}")
+    out.append(f"Unchanged: {sumry.get('unchanged',0)}")
+    out.append(f"Added   : {sumry.get('added',0)} ({sumry.get('bytes_added',0)} bytes)")
+    out.append(f"Removed : {sumry.get('removed',0)} ({sumry.get('bytes_removed',0)} bytes)")
+    out.append(f"Modified: {sumry.get('modified',0)}")
+    out.append(f"Change% : {sumry.get('changed_percent',0):.1f}%")
+
+    # old chunks
+    out.append("\n=== Old File Chunks (kept or removed) ===")
+    for c in diff_data.get("details",{}).get("removed_chunks",[])+diff_data.get("details",{}).get("unchanged_chunks",[]):
+        content = ""
+        try:
+            content = base64.b64decode(c.get("data","")).decode("utf-8",errors="replace")
+        except:
+            pass
+        out.append(f"Chunk {c['index']}: Offset {c['offset']} Size {c['size']}")
+        out.append("  " + content.replace("\n","\n  "))
+
+    # new chunks
+    out.append("\n=== New File Chunks (added or kept) ===")
+    for c in diff_data.get("details",{}).get("added_chunks",[])+diff_data.get("details",{}).get("unchanged_chunks",[]):
+        content = ""
+        try:
+            content = base64.b64decode(c.get("data","")).decode("utf-8",errors="replace")
+        except:
+            pass
+        out.append(f"Chunk {c['index']}: Offset {c['offset']} Size {c['size']}")
+        out.append("  " + content.replace("\n","\n  "))
+
+    # sync plan
+    out.append("\n=== Synchronization Plan ===")
+    out.append(f"Total Operations: {len(sync_plan.get('operations',[]))}")
+    out.append(f"Total Bytes: {sync_plan.get('total_bytes',0)}")
+    out.append(f"Efficiency: {sync_plan.get('efficiency',0)}%")
+    for i,op in enumerate(sync_plan.get("operations",[]),1):
+        out.append(f"\nOperation {i}: {op.get('type','?')}")
+        out.append(f"  Offset: {op.get('offset','?')}  Size: {op.get('size','?')}")
+        if op.get("type")=="ADD":
+            data_b64 = op.get("data","")
+            try:
+                txt = base64.b64decode(data_b64).decode("utf-8",errors="replace")
+                out.append("  Added Content:\n    " + txt.replace("\n","\n    "))
+            except:
+                pass
+        if op.get("type")=="MODIFY":
+            nd = op.get("new_data","")
+            try:
+                txt = base64.b64decode(nd).decode("utf-8",errors="replace")
+                out.append("  New Content:\n    " + txt.replace("\n","\n    "))
+            except:
+                pass
+        if op.get("type")=="REMOVE":
+            out.append("  Action: Remove bytes")
+
+    return "\n".join(out)
+
+@app.route('/analysis/<filename>')
+def serve_analysis_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/synchronize', methods=['POST'])
 def synchronize_files():
     try:
-        data = request.get_json()
-        operations = data.get('operations', [])
-        old_file_name = data.get('old_file')
+        data = request.get_json(force=True)
+        ops = data.get("operations",[])
+        old_fn = data.get("old_file")
+        if not old_fn or not ops:
+            return jsonify(status="error", message="Missing data"),400
 
-        if not old_file_name or not operations:
-            return jsonify({"status": "error", "message": "Missing required data"}), 400
+        UP = Path(app.config['UPLOAD_FOLDER'])
+        old_path = UP/old_fn
+        if not old_path.exists():
+            return jsonify(status="error", message="Old file not found"),404
 
-        old_file_path = Path(app.config['UPLOAD_FOLDER']) / old_file_name
-        synced_file_path = Path(app.config['UPLOAD_FOLDER']) / f"synced_{old_file_name}"
+        dst = UP/f"synced_{old_fn}"
+        shutil.copyfile(old_path, dst)
+        logging.debug(f"Copied to {dst}")
 
-        if not old_file_path.exists():
-            return jsonify({"status": "error", "message": "Old file not found"}), 404
+        content = bytearray(dst.read_bytes())
+        for op in ops:
+            t = op.get("type")
+            off = op.get("offset",0)
+            sz  = op.get("size",0)
+            if t=="ADD":
+                d = base64.b64decode(op.get("data",""))
+                content[off:off] = d
+            elif t=="REMOVE":
+                del content[off:off+sz]
+            elif t=="MODIFY":
+                nd = base64.b64decode(op.get("new_data",""))
+                content[off:off+sz] = nd
+        dst.write_bytes(content)
 
-        # Step 1: Copy old file to new synced file first
-        shutil.copyfile(old_file_path, synced_file_path)  # This requires shutil
-        logging.debug(f"Old file copied to {synced_file_path}")
+        return jsonify(status="success", message="Synchronized", output_file=dst.name)
 
-        # Step 2: Apply sync plan to the new file
-        try:
-            logging.debug(f"Applying sync plan to {synced_file_path}")
-            
-            # Ensure you are passing the correct operation keys and the file path
-            for operation in operations:
-                op_type = operation.get('type')
-                offset = operation.get('offset')
-                size = operation.get('size')
-                data = operation.get('data')
+    except Exception:
+        logging.exception("Error in /synchronize")
+        return jsonify(status="error", message="Internal server error"), 500
 
-                if op_type == 'ADD':
-                    # Assuming 'data' is base64 encoded, decode it and add to the file at 'offset'
-                    with open(synced_file_path, 'r+b') as file:
-                        file.seek(offset)
-                        file.write(base64.b64decode(data))
-
-                elif op_type == 'REMOVE':
-                    # Handle removal (just skip the section from the new file)
-                    pass
-
-                # Add more operation types if needed
-
-        except Exception as e:
-            logging.error(f"Error applying sync plan: {str(e)}")
-            return jsonify({
-                "status": "error",
-                "message": f"Error applying sync plan: {str(e)}"
-            }), 500
-
-        return jsonify({
-            "status": "success",
-            "message": "Files synchronized successfully!",
-            "output_file": f"synced_{old_file_name}"
-        })
-
-    except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Unexpected error: {str(e)}"
-        }), 500
-            
 @app.route('/uploads/<filename>')
 def serve_uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True)

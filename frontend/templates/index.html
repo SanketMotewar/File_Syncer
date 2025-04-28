@@ -469,14 +469,12 @@
             const chunkMap = document.getElementById('chunk-map');
             const operations = document.getElementById('operations');
             const syncButton = document.getElementById('sync-button');
-
+        
             let oldFile = null;
             let newFile = null;
-
-            let syncPlan = null;
-            let oldFilename = null;
-            let newFilename = null;
-
+        
+            window.syncData = null; // global syncData object
+        
             // Handle file selection
             oldFileInput.addEventListener('change', function(e) {
                 if (e.target.files.length > 0) {
@@ -485,7 +483,7 @@
                     checkFilesReady();
                 }
             });
-
+        
             newFileInput.addEventListener('change', function(e) {
                 if (e.target.files.length > 0) {
                     newFile = e.target.files[0];
@@ -493,261 +491,238 @@
                     checkFilesReady();
                 }
             });
-
-            function checkFilesReady() {
-                if (oldFile && newFile) {
-                    compareButton.disabled = false;
-                } else {
-                    compareButton.disabled = true;
-                }
-            }
-
-        compareButton.addEventListener('click', function() {
-            if (!oldFile || !newFile) return;
-
-            error.textContent = '';
-            results.style.display = 'none';
-            loading.style.display = 'block';
-
-            const formData = new FormData();
-            formData.append('old_file', oldFile);
-            formData.append('new_file', newFile);
-
-            fetch('/compare', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Chunk-Size': '64' }
-            })
-            .then(response => {
-                if (!response.ok) throw new Error('Server error');
-                return response.json();
-            })
-            .then(data => {
-                loading.style.display = 'none';
-                if (data.status !== 'success') throw new Error(data.message || 'Comparison failed');
-                
-                // Store synchronization data properly
-                window.syncData = {
-                    old_filename: data.old_filename,
-                    new_filename: data.new_filename,
-                    sync_plan: data.sync_plan.operations  // Extract operations array
-                };
-
-                displayResults(data);
-                results.style.display = 'block';
-                syncButton.disabled = false;
-            })
-            .catch(err => {
-                loading.style.display = 'none';
-                error.textContent = `Comparison Error: ${err.message}`;
-                console.error('Comparison error:', err);
-            });
-        });
-
-        syncButton.addEventListener('click', function() {
-            if (!window.syncData) {
-                error.textContent = 'Please compare files first';
-                return;
-            }
-
-            loading.style.display = 'block';
-            error.textContent = '';
-
-            fetch('/synchronize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    old_file: window.syncData.old_filename,
-                    new_file: window.syncData.new_filename,
-                    operations: window.syncData.sync_plan  // Send operations array directly
-                })
-            })
-            .then(response => {
-                if (!response.ok) throw new Error('Synchronization failed');
-                return response.json();
-            })
-            .then(data => {
-                loading.style.display = 'none';
-                if (data.status === 'success') {
-                    alert(`Success: ${data.message}`);
-                    window.syncData = null;  // Clear sync data
-                    syncButton.disabled = true;
-                } else {
-                    throw new Error(data.message);
-                }
-            })
-            .catch(err => {
-                loading.style.display = 'none';
-                error.textContent = `Sync Error: ${err.message}`;
-                console.error('Synchronization error:', err);
-            });
-        });
-
-    function displayResults(data) {
-        // Updated data validation
-        if (!data || !data.diff_report || !data.diff_report.summary) {
-            error.textContent = 'Error: Invalid data format received from server';
-            console.error('Invalid data format:', data);
-            return;
-        }
-
-        // Corrected summary reference
-        const summary = data.diff_report.summary || {};
         
-        // Updated stats display with proper field names
-        stats.innerHTML = `
-            <div class="stat-card">
-                <div class="stat-value">${summary.total_chunks || 0}</div>
-                <div class="stat-label">Total Chunks</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value stat-unchanged">${summary.unchanged || 0}</div>
-                <div class="stat-label">Unchanged</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value stat-added">${summary.added || 0}</div>
-                <div class="stat-label">Added (${formatBytes(summary.bytes_added || 0)})</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value stat-removed">${summary.removed || 0}</div>
-                <div class="stat-label">Removed (${formatBytes(summary.bytes_removed || 0)})</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${formatBytes(summary.old_size || 0)} → ${formatBytes(summary.new_size || 0)}</div>
-                <div class="stat-label">File Size</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" style="color: ${getChangeColor(summary.changed_percent || 0)}">
-                    ${Math.min(summary.changed_percent, 100).toFixed(1)}%
-                </div>
-                <div class="stat-label">Changed</div>
-            </div>
-        `;
-                // Display chunk visualization
-                renderChunkMap(data);
-
-                // Display operations
-                renderSyncOperations(data);
-
-                // Enable/disable sync button
-                syncButton.disabled = data.sync_plan.operations.length === 0;
+            function checkFilesReady() {
+                compareButton.disabled = !(oldFile && newFile);
             }
-
-        function renderChunkMap(data) {
-            chunkMap.innerHTML = '';
-            const maxWidth = 800; // Max width for visualization
-
-            // Use summary.new_size with fallback to 1 to prevent division by zero
-            const newSize = data.diff_report.summary.new_size || 1;
-
-            data.visualization.forEach(chunk => {
-                const chunkEl = document.createElement('div');
-                chunkEl.className = 'chunk';
-                chunkEl.style.backgroundColor = chunk.color;
-
-                // Calculate width using summary.new_size from diff_report
-                const width = Math.max(5, (chunk.size / newSize) * maxWidth);
-                chunkEl.style.width = `${width}px`;
-
-                const tooltip = document.createElement('div');
-                tooltip.className = 'chunk-tooltip';
-                tooltip.textContent = `${chunk.type} chunk (${formatBytes(chunk.size)})`;
-
-                chunkEl.appendChild(tooltip);
-                chunkMap.appendChild(chunkEl);
+        
+            compareButton.addEventListener('click', function() {
+                if (!oldFile || !newFile) return;
+        
+                error.textContent = '';
+                results.style.display = 'none';
+                loading.style.display = 'block';
+        
+                const formData = new FormData();
+                formData.append('old_file', oldFile);
+                formData.append('new_file', newFile);
+        
+                fetch('/compare', {
+                    method: 'POST',
+                    body: formData,
+                    headers: { 'X-Chunk-Size': '64' }
+                })
+                .then(response => {
+                    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    loading.style.display = 'none';
+        
+                    if (data.status !== 'success') throw new Error(data.message || 'Comparison failed');
+        
+                    window.syncData = {
+                        old_filename: data.old_filename,
+                        new_filename: data.new_filename,
+                        sync_plan: data.sync_plan.operations
+                    };
+        
+                    displayResults(data);
+                    results.style.display = 'block';
+                    syncButton.disabled = window.syncData.sync_plan.length === 0;
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    error.textContent = `Comparison Error: ${err.message}`;
+                    console.error('Comparison error:', err);
+                });
             });
-        }            
-
-        function renderSyncOperations(data) {
-            operations.innerHTML = '';
-
-            if (data.sync_plan.operations.length === 0) {
-                operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
-                return;
-            }
-
-            const header = document.createElement('div');
-            header.className = 'operation-header';
-            header.innerHTML = `
-                <div><strong>Operation</strong></div>
-                <div><strong>Details</strong></div>
-                <div><strong>Size</strong></div>
-            `;
-            operations.appendChild(header);
-
-            data.sync_plan.operations.forEach(op => {
-                const opEl = document.createElement('div');
-                opEl.className = 'operation';
-
-                let typeClass = '';
-                let typeText = '';
-                let details = '';
-                let dataPreview = '';
-
-                if (op.type === 'ADD') {
-                    typeClass = 'type-add';
-                    typeText = 'ADD';
-                    details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-                    if (op.data) {
-                        dataPreview = `<div class="data-preview">${op.data}</div>`;
-                    }
-                } else if (op.type === 'REMOVE') {
-                    typeClass = 'type-remove';
-                    typeText = 'REMOVE';
-                    details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
-                } else if (op.type === 'MODIFY') {
-                    typeClass = 'type-modify';
-                    typeText = 'MODIFY';
-                    details = `Old: ${op.old_offset}, New: ${op.new_offset}, Size: ${op.size} bytes`;
+        
+            syncButton.addEventListener('click', function() {
+                if (!window.syncData) {
+                    error.textContent = 'Please compare files first.';
+                    return;
                 }
-
-                opEl.innerHTML = `
-                    <div>
-                        <span class="operation-type ${typeClass}">${typeText}</span>
-                    </div>
-                    <div>
-                        ${details}
-                        ${dataPreview}
-                    </div>
-                    <div>${formatBytes(op.size)}</div>
-                `;
-
-                operations.appendChild(opEl);
+        
+                loading.style.display = 'block';
+                error.textContent = '';
+        
+                fetch('/synchronize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        old_file: window.syncData.old_filename,
+                        new_file: window.syncData.new_filename,
+                        operations: window.syncData.sync_plan
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) throw new Error(`Synchronization failed: ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    loading.style.display = 'none';
+                    if (data.status === 'success') {
+                        alert(`Synchronization Successful: ${data.message}`);
+                        window.syncData = null;
+                        syncButton.disabled = true;
+                    } else {
+                        throw new Error(data.message || 'Unknown sync error');
+                    }
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    error.textContent = `Sync Error: ${err.message}`;
+                    console.error('Synchronization error:', err);
+                });
             });
-
-            // Add efficiency info
-            if (data.sync_plan.efficiency > 0) {
-                const efficiencyInfo = document.createElement('div');
-                efficiencyInfo.className = 'efficiency-info';
-                efficiencyInfo.innerHTML = `
-                    <p>Sync Efficiency: <strong>${data.sync_plan.efficiency}%</strong></p>
-                    <p>Estimated Time: <strong>${data.sync_plan.estimated_time}s</strong> (at 10MB/s)</p>
+        
+            function displayResults(data) {
+                if (!data || !data.diff_report || !data.diff_report.summary) {
+                    error.textContent = 'Invalid data format from server.';
+                    console.error('Invalid server response:', data);
+                    return;
+                }
+        
+                const summary = data.diff_report.summary;
+        
+                stats.innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-value">${summary.total_chunks || 0}</div>
+                        <div class="stat-label">Total Chunks</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value stat-unchanged">${summary.unchanged || 0}</div>
+                        <div class="stat-label">Unchanged</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value stat-added">${summary.added || 0}</div>
+                        <div class="stat-label">Added (${formatBytes(summary.bytes_added || 0)})</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value stat-removed">${summary.removed || 0}</div>
+                        <div class="stat-label">Removed (${formatBytes(summary.bytes_removed || 0)})</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${formatBytes(summary.old_size || 0)} → ${formatBytes(summary.new_size || 0)}</div>
+                        <div class="stat-label">File Size</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" style="color: ${getChangeColor(summary.changed_percent || 0)}">
+                            ${Math.min(summary.changed_percent, 100).toFixed(1)}%
+                        </div>
+                        <div class="stat-label">Changed</div>
+                    </div>
                 `;
-                operations.appendChild(efficiencyInfo);
+        
+                renderChunkMap(data);
+                renderSyncOperations(data);
             }
-        }
-
-        function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-        }
-
-        function getChangeColor(percent) {
-            if (percent < 10) return '#4CAF50';
-            if (percent < 30) return '#FFC107';
-            if (percent < 50) return '#FF9800';
-            return '#F44336';
-        }
-
-        // Handle sync button click
-        syncButton.addEventListener('click', function() {
-            alert('Synchronization would be performed here in a full implementation.\nFor this demo, we would apply the sync plan to update the original file.');
+        
+            function renderChunkMap(data) {
+                chunkMap.innerHTML = '';
+        
+                const maxWidth = 800;
+                const newSize = data.diff_report.summary.new_size || 1;
+        
+                data.visualization.forEach(chunk => {
+                    const chunkEl = document.createElement('div');
+                    chunkEl.className = 'chunk';
+                    chunkEl.style.backgroundColor = chunk.color;
+        
+                    const width = Math.max(5, (chunk.size / newSize) * maxWidth);
+                    chunkEl.style.width = `${width}px`;
+        
+                    const tooltip = document.createElement('div');
+                    tooltip.className = 'chunk-tooltip';
+                    tooltip.textContent = `${chunk.type} chunk (${formatBytes(chunk.size)})`;
+        
+                    chunkEl.appendChild(tooltip);
+                    chunkMap.appendChild(chunkEl);
+                });
+            }
+        
+            function renderSyncOperations(data) {
+                operations.innerHTML = '';
+        
+                if (!data.sync_plan || !data.sync_plan.operations.length) {
+                    operations.innerHTML = '<p class="no-changes">No synchronization needed - files are identical</p>';
+                    return;
+                }
+        
+                const header = document.createElement('div');
+                header.className = 'operation-header';
+                header.innerHTML = `
+                    <div><strong>Operation</strong></div>
+                    <div><strong>Details</strong></div>
+                    <div><strong>Size</strong></div>
+                `;
+                operations.appendChild(header);
+        
+                data.sync_plan.operations.forEach(op => {
+                    const opEl = document.createElement('div');
+                    opEl.className = 'operation';
+        
+                    let typeClass = '';
+                    let typeText = '';
+                    let details = '';
+                    let dataPreview = '';
+        
+                    if (op.type === 'ADD') {
+                        typeClass = 'type-add';
+                        typeText = 'ADD';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                        if (op.data) {
+                            try {
+                                const content = atob(op.data.replace('...', ''));
+                                dataPreview = `<div class="data-preview">${content}</div>`;
+                            } catch(e) {
+                                console.error('Data decoding failed:', e);
+                            }
+                        }
+                    } else if (op.type === 'REMOVE') {
+                        typeClass = 'type-remove';
+                        typeText = 'REMOVE';
+                        details = `Offset: ${op.offset}, Size: ${op.size} bytes`;
+                    } else if (op.type === 'MODIFY') {
+                        typeClass = 'type-modify';
+                        typeText = 'MODIFY';
+                        details = `Old: ${op.old_offset}, New: ${op.new_offset}, Size: ${op.size} bytes`;
+                        if (op.new_data) {
+                            try {
+                                const content = atob(op.new_data.replace('...', ''));
+                                dataPreview = `<div class="data-preview">${content}</div>`;
+                            } catch(e) {
+                                console.error('New data decoding failed:', e);
+                            }
+                        }
+                    }
+        
+                    opEl.innerHTML = `
+                        <div><span class="operation-type ${typeClass}">${typeText}</span></div>
+                        <div>${details}${dataPreview}</div>
+                        <div>${formatBytes(op.size)}</div>
+                    `;
+        
+                    operations.appendChild(opEl);
+                });
+            }
+        
+            function formatBytes(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+        
+            function getChangeColor(percent) {
+                if (percent < 10) return '#4CAF50';
+                if (percent < 30) return '#FFC107';
+                if (percent < 50) return '#FF9800';
+                return '#F44336';
+            }
         });
-    });
-       
-    </script>
-</body>
+        </script>
+    </body>
 </html>

@@ -1,3 +1,4 @@
-This is the original file content.
-It has three lines of text.
-This is line number three.
+Hello, this is the first version of the file.
+It contains some important information.
+Please handle it with care.
+Thank you for reading.

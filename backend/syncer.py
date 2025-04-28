@@ -82,14 +82,13 @@ class FileSyncer:
             "estimated_time": self._estimate_sync_time(data["summary"]["bytes_changed"])
         }
 
-        # Process added chunks
+        # Process added chunks with full data
         for chunk in data['details'].get('added_chunks', []):
             sync_plan["operations"].append({
                 "type": "ADD",
                 "offset": chunk['offset'],
                 "size": chunk['size'],
-                "hash": chunk['hash'][:16],
-                "data": chunk.get('data', '')[:100] + "..." if chunk.get('data') else ""
+                "data": chunk.get('data', '')  # Full data without truncation
             })
 
         # Process removed chunks
@@ -97,32 +96,31 @@ class FileSyncer:
             sync_plan["operations"].append({
                 "type": "REMOVE",
                 "offset": chunk['offset'],
-                "size": chunk['size'],
-                "hash": chunk['hash'][:16]
+                "size": chunk['size']
             })
 
-        # Process modified chunks
+        # Process modified chunks with both old and new data
         for mod in data['details'].get('modified_chunks', []):
             sync_plan["operations"].append({
                 "type": "MODIFY",
                 "old_offset": mod['old_chunk']['offset'],
                 "new_offset": mod['new_chunk']['offset'],
                 "size": mod['new_chunk']['size'],
-                "old_hash": mod['old_chunk']['hash'][:16],
-                "new_hash": mod['new_chunk']['hash'][:16]
+                "old_data": mod['old_chunk'].get('data', ''),
+                "new_data": mod['new_chunk'].get('data', '')
             })
 
         return sync_plan
-
+        
     def _calculate_efficiency(self, data: Dict) -> float:
-        """Calculate sync efficiency percentage"""
-        if data["summary"]["new_size"] == 0:
-            return 0.0
-        return round(
-            (1 - (data["summary"]["bytes_changed"] / data["summary"]["new_size"])) * 100,
-            2
-        )
+            """Calculate sync efficiency percentage"""
+            if data["summary"]["new_size"] == 0:
+                return 0.0
+            return round(
+                (1 - (data["summary"]["bytes_changed"] / data["summary"]["new_size"])) * 100,
+                2
+            )
 
     def _estimate_sync_time(self, bytes_to_sync: int) -> float:
-        """Estimate sync time in seconds (assuming 10MB/s transfer speed)"""
-        return round(bytes_to_sync / (10 * 1024 * 1024), 2)
+            """Estimate sync time in seconds (assuming 10MB/s transfer speed)"""
+            return round(bytes_to_sync / (10 * 1024 * 1024), 2)
