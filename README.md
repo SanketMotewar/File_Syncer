@@ -86,7 +86,7 @@ Access the web interface at `http://localhost:5000`
 │   └── syncer.py     # Sync plan generator
 ├── frontend/
 │   ├── static/       # CSS/JS assets
-│   └── templates/    # HTML templates
+│   └── templates/index.html    # HTML templates
 ├── app.py            # Flask application
 └── requirements.txt  # Dependencies
 ```
